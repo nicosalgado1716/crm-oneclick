@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Onboarding de Cliente</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0d0e12; --panel:#15161d; --panel-2:#1b1d26;
+  --border:#2a2c38; --border-soft:#21232e;
+  --text:#f3f2ec; --text-2:#a4a6b2; --text-3:#6c6e7c;
+  --accent:#cdfa50; --accent-ink:#11140a;
+  --rose:#ff7a8a; --rose-dim:rgba(255,122,138,.14);
+  --r:14px; --r-sm:10px;
+  --font-d:"Bricolage Grotesque",sans-serif;
+  --font-b:"Hanken Grotesk",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--font-b); color:var(--text); background:var(--bg);
+  background-image:radial-gradient(900px 500px at 12% -5%, rgba(205,250,80,.07), transparent 60%);
+  -webkit-font-smoothing:antialiased; font-size:14.5px; line-height:1.55;
+  padding:36px 16px 80px;
+}
+.wrap{max-width:760px;margin:0 auto}
+h1{font-family:var(--font-d);font-weight:800;font-size:28px;letter-spacing:-.02em}
+h2{font-family:var(--font-d);font-weight:700;font-size:18px;letter-spacing:-.01em;margin-bottom:4px}
+.brand{color:var(--accent);font-family:var(--font-d);font-weight:700;font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
+.intro{color:var(--text-2);margin:14px 0 26px}
+.timeline{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:30px}
+.tl-card{background:var(--panel);border:1px solid var(--border-soft);border-radius:var(--r-sm);padding:14px}
+.tl-card .tl-t{font-family:var(--font-d);font-weight:700;color:var(--accent);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.tl-card p{font-size:12.5px;color:var(--text-2)}
+.block{background:var(--panel);border:1px solid var(--border-soft);border-radius:var(--r);padding:22px;margin-bottom:18px}
+.block .b-num{color:var(--accent);font-family:var(--font-d);font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:2px}
+.block .b-note{color:var(--text-3);font-size:12.5px;margin:8px 0 16px}
+.field{margin-bottom:15px}
+.field label{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:6px}
+.field .hint{display:block;font-size:11.5px;color:var(--text-3);font-weight:400;margin-top:3px}
+.field input,.field textarea{
+  width:100%;background:#0a0b0f;border:1px solid var(--border);border-radius:var(--r-sm);
+  padding:11px 13px;color:var(--text);outline:none;transition:.14s;font-family:inherit;font-size:14px;
+}
+.field input:focus,.field textarea:focus{border-color:var(--accent)}
+.field textarea{resize:vertical;min-height:66px}
+.warn{background:var(--rose-dim);color:var(--rose);border-radius:var(--r-sm);padding:10px 13px;font-size:12.5px;margin-bottom:16px}
+.redes-row{display:grid;grid-template-columns:110px 1fr 1fr 1fr;gap:10px;align-items:end;margin-bottom:12px}
+.redes-row .rl{font-weight:600;font-size:13px;padding-bottom:11px}
+@media(max-width:680px){ .timeline{grid-template-columns:1fr} .redes-row{grid-template-columns:1fr} .redes-row .rl{padding-bottom:0} }
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:36px}
+.pw-toggle{position:absolute;right:8px;top:8px;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11.5px;padding:4px 6px}
+.actions{display:flex;justify-content:flex-end;margin-top:8px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 24px;border-radius:var(--r-sm);font-weight:700;font-size:15px;border:none;cursor:pointer;font-family:var(--font-d)}
+.btn-primary{background:var(--accent);color:var(--accent-ink)}
+.btn-primary:disabled{opacity:.6;cursor:default}
+.err{color:var(--rose);font-size:13px;margin-top:10px;text-align:right}
+.done{text-align:center;padding:80px 20px}
+.done h1{margin-bottom:10px}
+.done p{color:var(--text-2)}
+.invalid{text-align:center;padding:80px 20px;color:var(--text-2)}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL      = 'https://gtvhhrxnkpiosnrqolce.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_DHX9nADtmrnLFAPU4oGykw_lc4y3gBv';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const params = new URLSearchParams(location.search);
+const cid = params.get('cid');
+const app = document.getElementById('app');
+
+const REDES = ['Instagram','TikTok','YouTube','Facebook / Meta Business','Otra (LinkedIn, web, etc.)'];
+
+function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function fieldHTML(id,label,opts={}){
+  const tag = opts.area ? 'textarea' : 'input';
+  const attrs = opts.area ? '' : 'type="text"';
+  return `<div class="field"><label>${label}${opts.hint?`<span class="hint">${opts.hint}</span>`:''}</label>
+    <${tag} id="${id}" ${attrs} placeholder="${opts.ph||''}"></${tag}></div>`;
+}
+
+function render(){
+  if(!cid){
+    app.innerHTML = `<div class="invalid"><h1>Link inválido</h1><p>Este link no tiene un cliente asociado. Pedile a tu agencia que te reenvíe el link correcto.</p></div>`;
+    return;
+  }
+
+  const redesRows = REDES.map((r,i)=>`
+    <div class="redes-row">
+      <div class="rl">${r}</div>
+      <div class="field" style="margin:0"><input id="r_user_${i}" placeholder="Usuario / email"></div>
+      <div class="field pw-wrap" style="margin:0"><input id="r_pass_${i}" type="password" placeholder="Contraseña">
+        <button type="button" class="pw-toggle" onclick="togglePw(${i})">ver</button></div>
+      <div class="field" style="margin:0"><input id="r_link_${i}" placeholder="Link al perfil"></div>
+    </div>`).join('');
+
+  app.innerHTML = `
+    <div class="brand">One Click · Dominio</div>
+    <h1>Onboarding del Cliente</h1>
+    <p class="intro">Bienvenido/a a bordo. Todo lo que completes acá nos permite producir a tu nombre, con tu criterio y tu voz, sin depender de reuniones eternas. Cuanto más completo, mejores y más rápidos van a ser los resultados. Tiempo estimado: 15-20 minutos. Si una pregunta no aplica, escribí "no sé" o "lo vemos en la call".</p>
+
+    <div class="timeline">
+      <div class="tl-card"><div class="tl-t">Hoy</div><p>Recibís tu video de bienvenida y arrancamos con tu caso.</p></div>
+      <div class="tl-card"><div class="tl-t">Esta semana</div><p>Auditoría express + 5-8 clips de regalo de tu material existente.</p></div>
+      <div class="tl-card"><div class="tl-t">Próximas 2 semanas</div><p>Primera tanda de contenido y agendamos tu primera grabación.</p></div>
+    </div>
+
+    <form id="f">
+      <div class="block">
+        <div class="b-num">Bloque 1</div><h2>Datos y contacto</h2>
+        ${fieldHTML('b1_marca','Nombre de la marca / empresa')}
+        ${fieldHTML('b1_contacto','Nombre y rol del contacto principal')}
+        ${fieldHTML('b1_otras','Otras personas involucradas (y su rol)',{area:true})}
+        ${fieldHTML('b1_mail','Mail de contacto')}
+        ${fieldHTML('b1_whatsapp','WhatsApp / teléfono')}
+        ${fieldHTML('b1_horario','Zona horaria y horarios de disponibilidad')}
+      </div>
+
+      <div class="block">
+        <div class="b-num">Bloque 2</div><h2>Accesos a tus cuentas</h2>
+        <div class="b-note">Para poder publicar y gestionar tu contenido necesitamos acceso a tus plataformas.</div>
+        <div class="warn">Seguridad: este link es privado, compartido solo con vos y el equipo de One Click. No lo reenvíes a terceros. Cuando termine el trabajo, podés cambiar las contraseñas.</div>
+        ${redesRows}
+      </div>
+
+      <div class="block">
+        <div class="b-num">Bloque 3</div><h2>El ADN de tu marca</h2>
+        ${fieldHTML('b3_resumen','Contanos en una frase a qué te dedicás / qué vendés')}
+        ${fieldHTML('b3_mision','Misión — ¿por qué existe tu marca? ¿Qué querés lograr en el mundo?',{area:true,hint:'Ej.: "Ayudo a que las familias encuentren su primera casa sin sentirse estafadas."'})}
+        ${fieldHTML('b3_vision','Visión — ¿a dónde querés llegar en 3-5 años?',{area:true})}
+        ${fieldHTML('b3_valores','Valores — 3 a 5 principios innegociables',{area:true})}
+        ${fieldHTML('b3_historia','La historia / el origen — ¿cómo empezó todo?',{area:true})}
+        ${fieldHTML('b3_diferencial','¿Qué te hace diferente de tu competencia?',{area:true})}
+      </div>
+
+      <div class="block">
+        <div class="b-num">Bloque 4</div><h2>Tu audiencia</h2>
+        ${fieldHTML('b4_ideal','¿A quién le hablás? Describí a tu cliente ideal',{area:true,hint:'Ej.: "inversores de 35-50, ya tienen una propiedad y buscan la segunda."'})}
+        ${fieldHTML('b4_dolores','Principales dolores / problemas de esa persona',{area:true})}
+        ${fieldHTML('b4_deseos','¿Qué desea lograr? ¿Cuál es su sueño o resultado ideal?',{area:true})}
+        ${fieldHTML('b4_objeciones','¿Qué objeciones o miedos suele tener antes de comprarte?',{area:true})}
+      </div>
+
+      <div class="block">
+        <div class="b-num">Bloque 5</div><h2>Voz y estilo de comunicación</h2>
+        ${fieldHTML('b5_tono','¿Cómo querés sonar? (cercano, formal, provocador, divertido, experto...)')}
+        ${fieldHTML('b5_adjetivos','Elegí 3 adjetivos que mejor te describan')}
+        ${fieldHTML('b5_muletillas','Palabras, frases o muletillas que querés que usemos',{area:true})}
+        ${fieldHTML('b5_prohibidas','Palabras o temas PROHIBIDOS',{area:true})}
+        ${fieldHTML('b5_sensibles','¿Hay temas sensibles que debamos esquivar?',{area:true})}
+      </div>
+
+      <div class="block">
+        <div class="b-num">Bloque 6</div><h2>Referencias e inspiración</h2>
+        ${fieldHTML('b6_admira','3 a 5 cuentas que admirás (y por qué)',{area:true})}
+        ${fieldHTML('b6_competidores','Tus competidores directos (links)',{area:true})}
+        ${fieldHTML('b6_inspirador','Contenido que te encantaría que hiciéramos algo parecido (links)',{area:true})}
+        ${fieldHTML('b6_evitar','Algo que hayas visto y digas "esto JAMÁS para mi marca"',{area:true})}
+      </div>
+
+      <div class="block">
+        <div class="b-num">Bloque 7</div><h2>Assets de marca</h2>
+        <div class="b-note">Pasanos todo por link, con permiso abierto ("Cualquier persona con el enlace").</div>
+        ${fieldHTML('b7_logo','Logo (en alta, ideal PNG con fondo transparente)')}
+        ${fieldHTML('b7_paleta','Paleta de colores (códigos o link de referencia)')}
+        ${fieldHTML('b7_tipografias','Tipografías de marca (nombre o link)')}
+        ${fieldHTML('b7_musica','Música / cortinas que te representan (links)')}
+        ${fieldHTML('b7_introoutro','Intro / outro existentes, si tenés (links)')}
+        ${fieldHTML('b7_fotos','Fotos / material de archivo (link a la carpeta)')}
+      </div>
+
+      <div class="block">
+        <div class="b-num">Bloque 8</div><h2>Munición de contenido</h2>
+        ${fieldHTML('b8_casos','Casos de éxito, testimonios o resultados que podamos mostrar',{area:true})}
+        ${fieldHTML('b8_preguntas','Preguntas que te hacen todo el tiempo (dudas frecuentes)',{area:true})}
+        ${fieldHTML('b8_ofertas','Ofertas, lanzamientos o productos a empujar próximamente',{area:true})}
+        ${fieldHTML('b8_historias','Historias, anécdotas o momentos tuyos que valga la pena contar',{area:true})}
+        ${fieldHTML('b8_exito','¿Cómo se ve el ÉXITO para vos en los próximos 90 días?',{area:true,hint:'Ej.: "llegar a 10k seguidores y cerrar 3 ventas que vengan del contenido."'})}
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary" id="submitBtn">Enviar respuestas</button>
+      </div>
+      <div class="err" id="err"></div>
+    </form>`;
+
+  document.getElementById('f').addEventListener('submit', onSubmit);
+}
+
+function togglePw(i){
+  const el = document.getElementById('r_pass_'+i);
+  el.type = el.type==='password' ? 'text' : 'password';
+}
+
+function v(id){ const el=document.getElementById(id); return el ? el.value.trim() : ''; }
+
+async function onSubmit(e){
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const err = document.getElementById('err');
+  err.textContent = '';
+  btn.disabled = true; btn.textContent = 'Enviando…';
+
+  const redes = REDES.map((r,i)=>({
+    plataforma: r, usuario: v('r_user_'+i), password: v('r_pass_'+i), link: v('r_link_'+i)
+  })).filter(r=>r.usuario||r.password||r.link);
+
+  const payload = {
+    bloque1:{ marca:v('b1_marca'), contacto:v('b1_contacto'), otras:v('b1_otras'), mail:v('b1_mail'), whatsapp:v('b1_whatsapp'), horario:v('b1_horario') },
+    redes,
+    bloque3:{ resumen:v('b3_resumen'), mision:v('b3_mision'), vision:v('b3_vision'), valores:v('b3_valores'), historia:v('b3_historia'), diferencial:v('b3_diferencial') },
+    bloque4:{ ideal:v('b4_ideal'), dolores:v('b4_dolores'), deseos:v('b4_deseos'), objeciones:v('b4_objeciones') },
+    bloque5:{ tono:v('b5_tono'), adjetivos:v('b5_adjetivos'), muletillas:v('b5_muletillas'), prohibidas:v('b5_prohibidas'), sensibles:v('b5_sensibles') },
+    bloque6:{ admira:v('b6_admira'), competidores:v('b6_competidores'), inspirador:v('b6_inspirador'), evitar:v('b6_evitar') },
+    bloque7:{ logo:v('b7_logo'), paleta:v('b7_paleta'), tipografias:v('b7_tipografias'), musica:v('b7_musica'), introoutro:v('b7_introoutro'), fotos:v('b7_fotos') },
+    bloque8:{ casos:v('b8_casos'), preguntas:v('b8_preguntas'), ofertas:v('b8_ofertas'), historias:v('b8_historias'), exito:v('b8_exito') }
+  };
+
+  try{
+    const { error } = await sb.from('onboarding_submissions').insert({ contact_id: cid, payload });
+    if(error) throw error;
+    app.innerHTML = `<div class="done"><h1>¡Gracias por tomarte el tiempo!</h1><p>Ya recibimos tus respuestas. Esto es exactamente lo que nos permite arrancar con todo desde el día uno y producir contenido que suene a vos, no a nosotros. Cualquier duda, escribinos por WhatsApp.</p></div>`;
+  }catch(ex){
+    console.error(ex);
+    err.textContent = 'No pudimos enviar el formulario. Revisá tu conexión e intentá de nuevo.';
+    btn.disabled = false; btn.textContent = 'Enviar respuestas';
+  }
+}
+
+render();
+</script>
+</body>
+</html>

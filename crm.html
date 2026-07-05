@@ -356,7 +356,11 @@ const I = {
   check:'<polyline points="20 6 9 17 4 12"/>',
   trend:'<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
   clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
-  x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
+  x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  clip:'<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 14l2 2 4-4"/>',
+  link:'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  eye:'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  copy:'<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
 };
 const svg = (p,cls='') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 
@@ -442,6 +446,7 @@ const PLATFORMS = ['Instagram','TikTok','YouTube','Facebook','LinkedIn','Reel','
 const VIEWS = [
   {id:'dashboard',label:'Dashboard',ico:I.dash,title:'Dashboard',sub:'Resumen general de tu operación'},
   {id:'clientes',label:'Clientes',ico:I.users,title:'Clientes',sub:'Base de clientes y contactos'},
+  {id:'onboarding',label:'Onboarding',ico:I.clip,title:'Onboarding de clientes',sub:'Cuestionario de marca, accesos y assets'},
   {id:'pipeline',label:'Pipeline',ico:I.funnel,title:'Pipeline de ventas',sub:'Arrastrá las tarjetas entre etapas'},
   {id:'produccion',label:'Producción',ico:I.film,title:'Producción',sub:'Grabación, edición y guiones'},
   {id:'publicacion',label:'Publicación',ico:I.send,title:'Publicación',sub:'Posproducción y subida de contenido'},
@@ -451,11 +456,20 @@ const VIEWS = [
 ];
 let current='dashboard';
 let calCursor = new Date();
+let onboardingSubs = [];
+async function loadOnboardingSubs(){
+  try{
+    const { data, error } = await sb.from('onboarding_submissions').select('*').eq('procesado',false).order('created_at',{ascending:false});
+    if(error) throw error;
+    onboardingSubs = data||[];
+  }catch(e){ console.error('Error al cargar onboarding:', e); onboardingSubs=[]; }
+}
 
 function renderNav(){
   const nav=document.getElementById('nav');
   const counts={
     clientes: state.contacts.length,
+    onboarding: onboardingSubs.length,
     pipeline: state.contacts.filter(c=>c.etapa!=='cliente').length,
     produccion: state.tasks.filter(t=>t.estado!=='listo').length,
     pagos: state.payments.filter(p=>p.estado!=='pagado').length,
@@ -598,13 +612,15 @@ RENDER.clientes=function(){
         <div><div style="font-weight:600">${escapeHtml(c.nombre)}</div><div class="muted" style="font-size:12px">${escapeHtml(c.empresa||'—')}</div></div></div></td>
       <td>${c.instagram?'<span class="muted">@'+escapeHtml(c.instagram.replace('@',''))+'</span>':'<span class="muted">—</span>'}</td>
       <td><span class="badge-pill ${sm.cls}"><span class="dot"></span>${sm.label}</span></td>
+      <td>${obPill(c)}</td>
       <td>${p&&p.nombre?escapeHtml(p.nombre):'<span class="muted">—</span>'}</td>
       <td style="font-family:var(--font-d);font-weight:600">${fmtMoney(monthlyValue(c),contactCurrency(c))}</td>
       <td><div class="t-actions">
+        <button class="icon-btn" title="Link de onboarding" onclick="onboardingLinkModal('${c.id}')">${svg(I.link)}</button>
         <button class="icon-btn" onclick="contactModal('${c.id}')">${svg(I.edit)}</button>
         <button class="icon-btn" onclick="delContact('${c.id}')">${svg(I.trash)}</button></div></td>
     </tr>`;
-  }).join('') : `<tr><td colspan="6">${emptyMini('No hay contactos. Creá el primero con "Nuevo contacto".')}</td></tr>`;
+  }).join('') : `<tr><td colspan="7">${emptyMini('No hay contactos. Creá el primero con "Nuevo contacto".')}</td></tr>`;
 
   C().innerHTML=`
     <div class="toolbar">
@@ -612,7 +628,7 @@ RENDER.clientes=function(){
       ${seg}
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Cliente / Marca</th><th>Instagram</th><th>Etapa</th><th>Plan</th><th>Valor mensual</th><th></th></tr></thead>
+      <thead><tr><th>Cliente / Marca</th><th>Instagram</th><th>Etapa</th><th>Onboarding</th><th>Plan</th><th>Valor mensual</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
 };
@@ -623,6 +639,12 @@ function contactModal(id){
   const planOpts = `<option value="">Sin plan</option>`+state.plans.map(p=>`<option value="${p.id}" ${c.planId===p.id?'selected':''}>${escapeHtml(p.nombre||'Plan sin nombre')}</option>`).join('');
   const stageOpts = STAGES.map(s=>`<option value="${s.id}" ${c.etapa===s.id?'selected':''}>${s.label}</option>`).join('');
   openModal(id?'Editar contacto':'Nuevo contacto',`
+    ${id?`<div class="li" style="border:1px solid var(--border-soft);border-radius:var(--r-sm);margin:-4px 0 4px">
+      <div class="li-main"><div class="li-t">Onboarding</div><div class="li-s">${OB_STATES[c.onboardingEstado]?.l||'Sin enviar'}</div></div>
+      <div class="li-r" style="display:flex;gap:6px">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="closeModal();onboardingLinkModal('${id}')">${svg(I.link)} Link</button>
+        ${c.onboarding?`<button type="button" class="btn btn-ghost btn-sm" onclick="closeModal();viewOnboardingFicha('${id}')">${svg(I.eye)} Ver ficha</button>`:''}
+      </div></div>`:''}
     <div class="field"><label>Nombre / Referente *</label><input id="f_nombre" value="${escapeHtml(c.nombre||'')}" placeholder="Ej: Gastón Pérez"></div>
     <div class="field"><label>Marca / Empresa</label><input id="f_empresa" value="${escapeHtml(c.empresa||'')}" placeholder="Ej: Inmobiliaria X"></div>
     <div class="field-row">
@@ -643,7 +665,9 @@ function contactModal(id){
     const nombre=val('f_nombre'); if(!nombre){toast('Poné un nombre');return false;}
     const obj={ id:id||uid(), nombre, empresa:val('f_empresa'), instagram:val('f_ig'), tel:val('f_tel'),
       email:val('f_email'), etapa:val('f_etapa'), planId:val('f_plan')||'', valorMensual:val('f_valor'),
-      origen:val('f_origen'), notas:val('f_notas'), creado:c.creado||todayISO() };
+      origen:val('f_origen'), notas:val('f_notas'), creado:c.creado||todayISO(),
+      onboardingEstado:c.onboardingEstado, onboardingEnviadoEn:c.onboardingEnviadoEn,
+      onboardingCompletadoEn:c.onboardingCompletadoEn, onboarding:c.onboarding };
     if(id){ const i=state.contacts.findIndex(x=>x.id===id); state.contacts[i]=obj; }
     else state.contacts.unshift(obj);
     save(); renderNav(); RENDER.clientes(); toast(id?'Contacto actualizado':'Contacto creado');
@@ -654,6 +678,141 @@ function delContact(id){
   confirmModal(`¿Eliminar a "${c.nombre}"?`,'También se quitará de pipeline. Las tareas y pagos asociados quedarán sin cliente.',()=>{
     state.contacts=state.contacts.filter(x=>x.id!==id);
     save(); renderNav(); RENDER.clientes(); toast('Contacto eliminado');
+  });
+}
+
+/* ---- ONBOARDING (formulario de marca, accesos y assets) ---- */
+const OB_STATES = {pendiente:{l:'Sin enviar',c:'b-gray'},enviado:{l:'Enviado',c:'b-amber'},completado:{l:'Completado',c:'b-green'}};
+function obPill(c){ const st=OB_STATES[c.onboardingEstado]||OB_STATES.pendiente; return `<span class="badge-pill ${st.c}"><span class="dot"></span>${st.l}</span>`; }
+function onboardingUrl(id){ return new URL('onboarding.html?cid='+encodeURIComponent(id), location.href).toString(); }
+
+function onboardingLinkModal(id){
+  const c=contactById(id);
+  const url=onboardingUrl(id);
+  openModal('Link de onboarding — '+c.nombre,`
+    <p class="muted" style="font-size:13px">Mandale este link por WhatsApp o mail. Es privado: solo quien lo tenga puede completarlo, y las respuestas van a quedar asociadas a la ficha de ${escapeHtml(c.nombre)}.</p>
+    <div class="field"><label>Link</label><input id="ob_url" value="${escapeHtml(url)}" readonly onclick="this.select()"></div>
+    ${c.onboardingEstado==='completado'?'<p class="muted" style="font-size:12.5px">Este cliente ya completó el formulario. Podés reenviarlo si necesitás que actualice algo.</p>':''}
+  `,()=>{
+    navigator.clipboard?.writeText(url).catch(()=>{});
+    if(c.onboardingEstado!=='completado'){ c.onboardingEstado='enviado'; c.onboardingEnviadoEn=todayISO(); save(); renderNav(); RENDER.clientes(); if(current==='onboarding') RENDER.onboarding(); }
+    toast('Link copiado al portapapeles');
+  },'Copiar link');
+}
+
+RENDER.onboarding=async function(){
+  topAction(`<button class="btn btn-ghost" onclick="refreshOnboarding()">${svg(I.check)} Actualizar</button>`);
+  C().innerHTML = emptyMini('Cargando…');
+  await loadOnboardingSubs();
+  renderNav();
+
+  const pendCards = onboardingSubs.length ? onboardingSubs.map(s=>{
+    const c = contactById(s.contact_id);
+    const nombre = c ? c.nombre : 'Cliente no encontrado (id '+escapeHtml(s.contact_id)+')';
+    return `<div class="li">
+      <div class="avatar ${avatarColor(nombre)}">${initials(nombre)}</div>
+      <div class="li-main"><div class="li-t">${escapeHtml(nombre)}</div><div class="li-s">Recibido ${fmtDateLong(s.created_at.slice(0,10))}</div></div>
+      <div class="li-r" style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="viewSubmission('${s.id}')">Ver</button>
+        ${c?`<button class="btn btn-primary btn-sm" onclick="applyOnboardingSubmission('${s.id}')">Aplicar a ficha</button>`:''}
+        <button class="btn btn-danger btn-sm" onclick="discardSubmission('${s.id}')">${svg(I.trash)}</button>
+      </div></div>`;
+  }).join('') : emptyMini('No hay respuestas nuevas por revisar.');
+
+  const rows = state.contacts.length ? state.contacts.map(c=>`
+    <tr>
+      <td><div class="t-name"><div class="avatar ${avatarColor(c.nombre)}">${initials(c.nombre)}</div><div style="font-weight:600">${escapeHtml(c.nombre)}</div></div></td>
+      <td>${obPill(c)}</td>
+      <td class="muted">${c.onboardingEnviadoEn?fmtDate(c.onboardingEnviadoEn):'—'}</td>
+      <td class="muted">${c.onboardingCompletadoEn?fmtDate(c.onboardingCompletadoEn):'—'}</td>
+      <td><div class="t-actions">
+        <button class="btn btn-ghost btn-sm" onclick="onboardingLinkModal('${c.id}')">${svg(I.link)} Link</button>
+        ${c.onboarding?`<button class="btn btn-ghost btn-sm" onclick="viewOnboardingFicha('${c.id}')">${svg(I.eye)} Ver ficha</button>`:''}
+      </div></td>
+    </tr>`).join('') : `<tr><td colspan="5">${emptyMini('Todavía no hay clientes cargados.')}</td></tr>`;
+
+  C().innerHTML=`
+    <div class="list-card" style="margin-bottom:22px">
+      <div class="lc-head">${svg(I.clip)} Respuestas por revisar</div>
+      ${pendCards}
+    </div>
+    <div class="section-head"><h2>Estado por cliente</h2></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Cliente</th><th>Estado</th><th>Enviado</th><th>Completado</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+};
+function refreshOnboarding(){ RENDER.onboarding(); }
+
+function viewSubmission(subId){
+  const s = onboardingSubs.find(x=>x.id===subId); if(!s) return;
+  const c = contactById(s.contact_id);
+  onboardingFichaModal(s.payload, c?c.nombre:'Cliente no encontrado', false);
+}
+function viewOnboardingFicha(contactId){
+  const c = contactById(contactId); if(!c||!c.onboarding) return;
+  onboardingFichaModal(c.onboarding, c.nombre, true);
+}
+function onboardingFichaModal(p, nombre, saved){
+  const row = (label,value) => value ? `<div style="margin-bottom:10px"><div class="muted" style="font-size:11.5px;text-transform:uppercase;letter-spacing:.05em">${label}</div><div style="white-space:pre-wrap">${escapeHtml(value)}</div></div>` : '';
+  const redesHTML = (p.redes||[]).length ? p.redes.map((r,i)=>`
+    <div style="display:grid;grid-template-columns:120px 1fr 1fr 1fr;gap:8px;align-items:center;font-size:13px;margin-bottom:6px">
+      <div style="font-weight:600">${escapeHtml(r.plataforma)}</div>
+      <div>${escapeHtml(r.usuario||'—')}</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="ob_pw_${i}" data-pw="${escapeHtml(r.password||'')}">${r.password?'••••••••':'—'}</span>
+        ${r.password?`<button class="icon-btn" style="width:24px;height:24px" onclick="togglePwSpan('ob_pw_${i}')">${svg(I.eye)}</button>`:''}
+      </div>
+      <div class="muted">${r.link?`<a href="${escapeHtml(r.link)}" target="_blank" style="text-decoration:underline">Ver perfil</a>`:'—'}</div>
+    </div>`).join('') : '<p class="muted">Sin accesos cargados.</p>';
+  const b = p.bloque1||{}, b3=p.bloque3||{}, b4=p.bloque4||{}, b5=p.bloque5||{}, b6=p.bloque6||{}, b7=p.bloque7||{}, b8=p.bloque8||{};
+  openModal('Ficha de onboarding — '+escapeHtml(nombre),`
+    <div class="warn" style="background:var(--rose-dim);color:var(--rose);border-radius:var(--r-sm);padding:10px 13px;font-size:12.5px">Contiene datos sensibles (contraseñas de redes). No compartas esta información fuera del equipo.</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin-bottom:8px">1 · Datos y contacto</h3>
+      ${row('Marca / empresa',b.marca)}${row('Contacto principal',b.contacto)}${row('Otras personas',b.otras)}${row('Mail',b.mail)}${row('WhatsApp',b.whatsapp)}${row('Disponibilidad',b.horario)}</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin:14px 0 8px">2 · Accesos a cuentas</h3>${redesHTML}</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin:14px 0 8px">3 · ADN de marca</h3>
+      ${row('Resumen',b3.resumen)}${row('Misión',b3.mision)}${row('Visión',b3.vision)}${row('Valores',b3.valores)}${row('Historia',b3.historia)}${row('Diferencial',b3.diferencial)}</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin:14px 0 8px">4 · Audiencia</h3>
+      ${row('Cliente ideal',b4.ideal)}${row('Dolores',b4.dolores)}${row('Deseos',b4.deseos)}${row('Objeciones',b4.objeciones)}</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin:14px 0 8px">5 · Voz y estilo</h3>
+      ${row('Tono',b5.tono)}${row('Adjetivos',b5.adjetivos)}${row('Muletillas',b5.muletillas)}${row('Prohibido',b5.prohibidas)}${row('Temas sensibles',b5.sensibles)}</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin:14px 0 8px">6 · Referencias</h3>
+      ${row('Cuentas que admira',b6.admira)}${row('Competidores',b6.competidores)}${row('Contenido inspirador',b6.inspirador)}${row('A evitar',b6.evitar)}</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin:14px 0 8px">7 · Assets</h3>
+      ${row('Logo',b7.logo)}${row('Paleta',b7.paleta)}${row('Tipografías',b7.tipografias)}${row('Música',b7.musica)}${row('Intro/outro',b7.introoutro)}${row('Fotos',b7.fotos)}</div>
+    <div><h3 style="font-family:var(--font-d);font-size:14px;margin:14px 0 8px">8 · Munición de contenido</h3>
+      ${row('Casos de éxito',b8.casos)}${row('Preguntas frecuentes',b8.preguntas)}${row('Ofertas',b8.ofertas)}${row('Historias',b8.historias)}${row('Éxito en 90 días',b8.exito)}</div>
+  `,()=>{},'Cerrar');
+}
+function togglePwSpan(spanId){
+  const el=document.getElementById(spanId); if(!el) return;
+  el.textContent = el.textContent==='••••••••' ? el.dataset.pw : '••••••••';
+}
+
+async function applyOnboardingSubmission(subId){
+  const s = onboardingSubs.find(x=>x.id===subId); if(!s) return;
+  const c = contactById(s.contact_id);
+  if(!c){ toast('No se encontró el cliente asociado'); return; }
+  c.onboarding = s.payload;
+  c.onboardingEstado = 'completado';
+  c.onboardingCompletadoEn = todayISO();
+  save();
+  try{
+    const { error } = await sb.from('onboarding_submissions').update({ procesado:true }).eq('id', s.id);
+    if(error) throw error;
+  }catch(e){ console.error('Error al marcar procesado:', e); }
+  toast('Ficha aplicada a '+c.nombre);
+  RENDER.onboarding();
+}
+function discardSubmission(subId){
+  confirmModal('¿Descartar esta respuesta?','No se va a aplicar a ningún cliente. Esta acción no se puede deshacer.',async()=>{
+    try{
+      const { error } = await sb.from('onboarding_submissions').update({ procesado:true }).eq('id', subId);
+      if(error) throw error;
+    }catch(e){ console.error('Error al descartar:', e); }
+    toast('Respuesta descartada');
+    RENDER.onboarding();
   });
 }
 
@@ -1006,6 +1165,7 @@ async function startApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('app').style.display='grid';
   await load();
+  await loadOnboardingSubs();
   applyBrand();
   renderNav();
   go('dashboard');

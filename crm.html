@@ -1067,6 +1067,7 @@ function renderConexiones(c){
   const rows = [
     {pl:'YouTube', key:'youtube', conectar:'connectYoutubeModal', sync:'syncYoutube'},
     {pl:'Instagram', key:'instagram', conectar:'connectInstagramModal', sync:'syncInstagram'},
+    {pl:'Facebook', key:'facebook', conectar:'connectFacebookModal', sync:'syncFacebook'},
     {pl:'TikTok', key:'tiktok', conectar:'connectTiktokModal', sync:null},
   ].map(r=>{
     const conf = c.conexiones && c.conexiones[r.key];
@@ -1080,7 +1081,7 @@ function renderConexiones(c){
   }).join('');
   return `<div class="card" style="margin-bottom:18px">
     <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:4px">Cuentas conectadas</div>
-    <p class="muted" style="font-size:12.5px;margin-bottom:6px">YouTube e Instagram se conectan con tus propias credenciales de API. TikTok todavía requiere una app propia aprobada por TikTok for Developers.</p>
+    <p class="muted" style="font-size:12.5px;margin-bottom:6px">YouTube, Instagram y Facebook se conectan por separado, cada uno con sus propias credenciales de API (son plataformas distintas con métricas distintas). TikTok todavía requiere una app propia aprobada por TikTok for Developers.</p>
     ${rows}
   </div>`;
 }
@@ -1206,6 +1207,70 @@ async function syncInstagram(clientId){
     save(); RENDER.metricas();
     toast('Instagram sincronizado: '+(data.data||[]).length+' publicaciones'+(sinInsights?` (${sinInsights} sin métricas detalladas — revisá el permiso instagram_manage_insights del token)`:''));
   }catch(e){ console.error('Error al sincronizar Instagram:',e); toast('Error al sincronizar Instagram: '+e.message); }
+}
+
+function connectFacebookModal(clientId){
+  const c=contactById(clientId);
+  const conf=(c.conexiones&&c.conexiones.facebook)||{};
+  openModal('Conectar Facebook — '+escapeHtml(c.nombre),`
+    <p class="muted" style="font-size:12.5px">Es una conexión aparte de Instagram: acá se traen los videos publicados en la <b>Página de Facebook</b> del cliente, no su cuenta de Instagram.</p>
+    <ol class="muted" style="font-size:12.5px;margin:0 0 12px 18px;padding:0">
+      <li>Andá al <b>Graph API Explorer</b> (developers.facebook.com/tools/explorer) y elegí tu app.</li>
+      <li>En el selector "User or Page", elegí la <b>Página</b> del cliente (no tu usuario) para generar un <b>Page Access Token</b>.</li>
+      <li>Tildá los permisos: <code>pages_read_engagement</code>, <code>pages_read_user_content</code>, <code>read_insights</code>. Generá el token.</li>
+      <li>Extendelo a larga duración con el botón "Extender Token de Acceso" (Access Token Debugger) y pegá ese acá.</li>
+      <li>Para el ID de Página: llamá <code>GET /me/accounts</code> con tu usuario — te lista tus Páginas con su <code>id</code>.</li>
+    </ol>
+    <p class="muted" style="font-size:12.5px">Traemos vistas, likes, comentarios y compartidos de sus videos. Facebook no expone "guardados" para videos vía API pública, así que ese campo queda vacío acá (si querés cargarlo a mano, podés editarlo en la tabla).</p>
+    <div class="field"><label>Page Access Token</label><input id="f_tok" value="${escapeHtml(conf.token||'')}" placeholder="EAAG..."></div>
+    <div class="field"><label>ID de la Página de Facebook</label><input id="f_page" value="${escapeHtml(conf.pageId||'')}" placeholder="1023..."></div>
+  `,()=>{
+    const tok=val('f_tok'), page=val('f_page');
+    if(!tok||!page){ toast('Completá el token y el ID de Página'); return false; }
+    c.conexiones=c.conexiones||{};
+    c.conexiones.facebook={ token:tok, pageId:page, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
+    save(); RENDER.metricas(); toast('Facebook conectado, sincronizando…');
+    syncFacebook(clientId);
+  },'Conectar y sincronizar');
+}
+async function fetchFbVideoInsights(videoId, token){
+  try{
+    const res = await fetch(`https://graph.facebook.com/v19.0/${videoId}/video_insights?metric=total_video_views,total_video_avg_time_watched&access_token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    if(data.error) return null;
+    const out = {};
+    (data.data||[]).forEach(m=>{ out[m.name] = (m.values&&m.values[0]) ? m.values[0].value : null; });
+    return out;
+  }catch(e){ return null; }
+}
+async function syncFacebook(clientId){
+  const c=contactById(clientId);
+  const conf=c.conexiones&&c.conexiones.facebook;
+  if(!conf||!conf.token||!conf.pageId){ toast('Falta configurar Facebook para este cliente'); return; }
+  toast('Sincronizando Facebook…');
+  try{
+    const url=`https://graph.facebook.com/v19.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=15&access_token=${encodeURIComponent(conf.token)}`;
+    const res=await fetch(url);
+    const data=await res.json();
+    if(data.error) throw new Error(data.error.message);
+    let sinInsights=0;
+    for(const item of (data.data||[])){
+      const ins = await fetchFbVideoInsights(item.id, conf.token);
+      if(!ins) sinInsights++;
+      upsertApiVideo(clientId,'Facebook','https://www.facebook.com'+(item.permalink_url||''),{
+        titulo:(item.title||item.description||'Video de Facebook').slice(0,80),
+        fecha:(item.created_time||'').slice(0,10),
+        likes:(item.likes&&item.likes.summary&&item.likes.summary.total_count)||0,
+        comentarios:(item.comments&&item.comments.summary&&item.comments.summary.total_count)||0,
+        vistas:ins?(ins.total_video_views??''):'',
+        retencionSeg:ins&&ins.total_video_avg_time_watched!=null?(ins.total_video_avg_time_watched/1000):'',
+        origen:'api'
+      });
+    }
+    conf.estado='conectado'; conf.ultimaSync=new Date().toISOString();
+    save(); RENDER.metricas();
+    toast('Facebook sincronizado: '+(data.data||[]).length+' videos'+(sinInsights?` (${sinInsights} sin métricas detalladas — revisá el permiso read_insights del token)`:''));
+  }catch(e){ console.error('Error al sincronizar Facebook:',e); toast('Error al sincronizar Facebook: '+e.message); }
 }
 
 function connectTiktokModal(clientId){

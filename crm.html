@@ -952,7 +952,7 @@ let metClientFilter='all';
 function videoEngagement(v){
   const vistas=Number(v.vistas||0);
   if(!vistas) return 0;
-  return (Number(v.likes||0)+Number(v.comentarios||0)+Number(v.compartidos||0))/vistas*100;
+  return (Number(v.likes||0)+Number(v.comentarios||0)+Number(v.compartidos||0)+Number(v.guardados||0))/vistas*100;
 }
 RENDER.metricas=function(){
   topAction(`<button class="btn btn-primary" onclick="videoModal()">${svg(I.plus)} Nuevo video</button>`);
@@ -963,6 +963,8 @@ RENDER.metricas=function(){
   const totVistas = list.reduce((a,v)=>a+Number(v.vistas||0),0);
   const totLikes = list.reduce((a,v)=>a+Number(v.likes||0),0);
   const totCom = list.reduce((a,v)=>a+Number(v.comentarios||0),0);
+  const totComp = list.reduce((a,v)=>a+Number(v.compartidos||0),0);
+  const totGuard = list.reduce((a,v)=>a+Number(v.guardados||0),0);
   const engProm = list.length ? (list.reduce((a,v)=>a+videoEngagement(v),0)/list.length) : 0;
 
   const clientOpts = `<option value="all">Todos los clientes</option>`+state.contacts.map(c=>`<option value="${c.id}" ${metClientFilter===c.id?'selected':''}>${escapeHtml(c.nombre)}</option>`).join('');
@@ -986,9 +988,12 @@ RENDER.metricas=function(){
       <td style="font-family:var(--font-d)">${Number(v.vistas||0).toLocaleString('es-AR')}</td>
       <td style="font-family:var(--font-d)">${Number(v.likes||0).toLocaleString('es-AR')}</td>
       <td style="font-family:var(--font-d)">${Number(v.comentarios||0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--font-d)">${Number(v.compartidos||0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--font-d)">${Number(v.guardados||0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--font-d)">${v.retencionSeg?Number(v.retencionSeg).toFixed(1)+'s':'—'}</td>
       <td style="font-family:var(--font-d);font-weight:600;color:var(--accent)">${videoEngagement(v).toFixed(1)}%</td>
       <td><div class="t-actions"><button class="icon-btn" onclick="videoModal('${v.id}')">${svg(I.edit)}</button><button class="icon-btn" onclick="delItem('videos','${v.id}','metricas')">${svg(I.trash)}</button></div></td>
-    </tr>`).join('') : `<tr><td colspan="9">${emptyMini('Todavía no cargaste videos. Usá "Nuevo video" para empezar a registrar métricas.')}</td></tr>`;
+    </tr>`).join('') : `<tr><td colspan="12">${emptyMini('Todavía no cargaste videos. Usá "Nuevo video" para empezar a registrar métricas.')}</td></tr>`;
 
   C().innerHTML=`
     <div class="toolbar">
@@ -998,7 +1003,7 @@ RENDER.metricas=function(){
       ${(()=>{const stat=(ico,col,val,lbl)=>`<div class="stat"><div class="s-ico ${col}">${svg(ico)}</div><div class="s-val">${val}</div><div class="s-lbl">${lbl}</div></div>`;
         return stat(I.film,'b-blue',list.length,'Videos cargados')
           + stat(I.eye,'b-accent',totVistas.toLocaleString('es-AR'),'Vistas totales')
-          + stat(I.trend,'b-green',(totLikes+totCom).toLocaleString('es-AR'),'Interacciones')
+          + stat(I.trend,'b-green',(totLikes+totCom+totComp+totGuard).toLocaleString('es-AR'),'Interacciones')
           + stat(I.trend,'b-amber',engProm.toFixed(1)+'%','Engagement promedio');})()}
     </div>
     ${conexionesHTML}
@@ -1006,10 +1011,10 @@ RENDER.metricas=function(){
       <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:6px">Videos por plataforma</div>
       <div class="bars">${platBars}</div>
     </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Video</th><th>Cliente</th><th>Plataforma</th><th>Fecha</th><th>Vistas</th><th>Likes</th><th>Comentarios</th><th>Engagement</th><th></th></tr></thead>
+    <div style="overflow-x:auto"><div class="table-wrap"><table>
+      <thead><tr><th>Video</th><th>Cliente</th><th>Plataforma</th><th>Fecha</th><th>Vistas</th><th>Likes</th><th>Comentarios</th><th>Compartidos</th><th>Guardados</th><th>Retención</th><th>Engagement</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
-    </table></div>`;
+    </table></div></div>`;
 };
 function videoModal(id){
   const v=id?state.videos.find(x=>x.id===id):{plataforma:'Instagram',clientId:metClientFilter!=='all'?metClientFilter:''};
@@ -1032,11 +1037,16 @@ function videoModal(id){
       <div class="field"><label>Comentarios</label><input id="f_com" type="number" value="${v.comentarios??''}" placeholder="0"></div>
       <div class="field"><label>Compartidos</label><input id="f_comp" type="number" value="${v.compartidos??''}" placeholder="0"></div>
     </div>
+    <div class="field-row">
+      <div class="field"><label>Guardados</label><input id="f_guard" type="number" value="${v.guardados??''}" placeholder="0"></div>
+      <div class="field"><label>Retención promedio (segundos)</label><input id="f_reten" type="number" value="${v.retencionSeg??''}" placeholder="Ej: 12.4"></div>
+    </div>
     <div class="field"><label>Notas</label><textarea id="f_notas" placeholder="Qué funcionó, hipótesis, aprendizajes...">${escapeHtml(v.notas||'')}</textarea></div>
   `,()=>{
     const titulo=val('f_tit'); if(!titulo){toast('Poné un título');return false;}
     const obj={id:id||uid(),titulo,clientId:val('f_cli'),plataforma:val('f_plat'),fecha:val('f_fecha'),link:val('f_link'),
-      vistas:val('f_vistas'),likes:val('f_likes'),comentarios:val('f_com'),compartidos:val('f_comp'),notas:val('f_notas'),origen:v.origen||'manual'};
+      vistas:val('f_vistas'),likes:val('f_likes'),comentarios:val('f_com'),compartidos:val('f_comp'),
+      guardados:val('f_guard'),retencionSeg:val('f_reten'),notas:val('f_notas'),origen:v.origen||'manual'};
     if(id){const i=state.videos.findIndex(x=>x.id===id);state.videos[i]=obj;}else state.videos.unshift(obj);
     save();RENDER.metricas();toast(id?'Video actualizado':'Video cargado');
   });
@@ -1047,7 +1057,8 @@ function upsertApiVideo(clientId,plataforma,link,data){
   let existing = state.videos.find(x=>x.clientId===clientId && x.plataforma===plataforma && x.link===link);
   const obj = Object.assign({
     id: existing?existing.id:uid(), clientId, plataforma, link,
-    compartidos: existing?existing.compartidos:'', notas: existing?existing.notas:''
+    compartidos: existing?existing.compartidos:'', guardados: existing?existing.guardados:'',
+    retencionSeg: existing?existing.retencionSeg:'', notas: existing?existing.notas:''
   }, data);
   if(existing){ const i=state.videos.findIndex(x=>x.id===existing.id); state.videos[i]=obj; }
   else state.videos.unshift(obj);
@@ -1129,7 +1140,15 @@ function connectInstagramModal(clientId){
   const c=contactById(clientId);
   const conf=(c.conexiones&&c.conexiones.instagram)||{};
   openModal('Conectar Instagram — '+escapeHtml(c.nombre),`
-    <p class="muted" style="font-size:12.5px">Necesitás un Access Token de la Graph API de Meta y el ID de cuenta de Instagram Business/Creator del cliente. Se generan desde tu app en developers.facebook.com (Graph API Explorer), sobre una cuenta que administres o donde te hayan agregado como tester. Instagram no siempre expone "vistas" vía API pública; traemos likes y comentarios, y vistas cuando estén disponibles.</p>
+    <p class="muted" style="font-size:12.5px">Con acceso a la cuenta de Meta del cliente:</p>
+    <ol class="muted" style="font-size:12.5px;margin:0 0 12px 18px;padding:0">
+      <li>La cuenta de Instagram tiene que ser Business o Creator, y estar vinculada a una Página de Facebook que administrés.</li>
+      <li>Andá al <b>Graph API Explorer</b> (developers.facebook.com/tools/explorer), elegí tu app (o creá una tipo "Business" si no tenés) y la Página del cliente.</li>
+      <li>En "Permisos", tildá: <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>. Generá el token.</li>
+      <li>Ese token dura ~1 hora: usá el botón <b>"Extender Token de Acceso"</b> (Access Token Debugger) para convertirlo en uno de larga duración (~60 días), y pegá ese acá.</li>
+      <li>Para el ID de cuenta: llamá <code>GET /me/accounts</code> para ver tus Páginas, y sobre la Página del cliente llamá <code>GET /{page-id}?fields=instagram_business_account</code> — ese número es el ID que va abajo.</li>
+    </ol>
+    <p class="muted" style="font-size:12.5px">Traemos likes, comentarios, vistas, compartidos y guardados. Para Reels, además el tiempo de reproducción promedio (lo más cercano a "retención" que expone Meta).</p>
     <div class="field"><label>Access Token</label><input id="f_tok" value="${escapeHtml(conf.token||'')}" placeholder="EAAG..."></div>
     <div class="field"><label>ID de cuenta de Instagram Business</label><input id="f_ig" value="${escapeHtml(conf.igId||'')}" placeholder="1784..."></div>
   `,()=>{
@@ -1141,26 +1160,51 @@ function connectInstagramModal(clientId){
     syncInstagram(clientId);
   },'Conectar y sincronizar');
 }
+const IG_INSIGHT_METRICS = {
+  REELS: 'plays,reach,saved,shares,ig_reels_avg_watch_time',
+  VIDEO: 'video_views,reach,saved,shares',
+  CAROUSEL_ALBUM: 'impressions,reach,saved,shares',
+  IMAGE: 'impressions,reach,saved,shares'
+};
+async function fetchIgInsights(mediaId, mediaProductType, token){
+  const metrics = IG_INSIGHT_METRICS[mediaProductType] || IG_INSIGHT_METRICS.IMAGE;
+  try{
+    const res = await fetch(`https://graph.facebook.com/v19.0/${mediaId}/insights?metric=${metrics}&access_token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    if(data.error) return null;
+    const out = {};
+    (data.data||[]).forEach(m=>{ out[m.name] = (m.values&&m.values[0]) ? m.values[0].value : null; });
+    return out;
+  }catch(e){ return null; }
+}
 async function syncInstagram(clientId){
   const c=contactById(clientId);
   const conf=c.conexiones&&c.conexiones.instagram;
   if(!conf||!conf.token||!conf.igId){ toast('Falta configurar Instagram para este cliente'); return; }
   toast('Sincronizando Instagram…');
   try{
-    const url=`https://graph.facebook.com/v19.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,permalink,timestamp,like_count,comments_count&limit=15&access_token=${encodeURIComponent(conf.token)}`;
+    const url=`https://graph.facebook.com/v19.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=15&access_token=${encodeURIComponent(conf.token)}`;
     const res=await fetch(url);
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
-    (data.data||[]).forEach(item=>{
+    let sinInsights=0;
+    for(const item of (data.data||[])){
+      const ins = await fetchIgInsights(item.id, item.media_product_type, conf.token);
+      if(!ins) sinInsights++;
       upsertApiVideo(clientId,'Instagram',item.permalink||'',{
         titulo:(item.caption||'Publicación de Instagram').slice(0,80),
         fecha:(item.timestamp||'').slice(0,10),
-        likes:item.like_count||0, comentarios:item.comments_count||0, origen:'api'
+        likes:item.like_count||0, comentarios:item.comments_count||0,
+        vistas:ins?(ins.plays??ins.video_views??ins.impressions??''):'',
+        compartidos:ins?(ins.shares??''):'',
+        guardados:ins?(ins.saved??''):'',
+        retencionSeg:ins?(ins.ig_reels_avg_watch_time??''):'',
+        origen:'api'
       });
-    });
+    }
     conf.estado='conectado'; conf.ultimaSync=new Date().toISOString();
     save(); RENDER.metricas();
-    toast('Instagram sincronizado: '+(data.data||[]).length+' publicaciones');
+    toast('Instagram sincronizado: '+(data.data||[]).length+' publicaciones'+(sinInsights?` (${sinInsights} sin métricas detalladas — revisá el permiso instagram_manage_insights del token)`:''));
   }catch(e){ console.error('Error al sincronizar Instagram:',e); toast('Error al sincronizar Instagram: '+e.message); }
 }
 

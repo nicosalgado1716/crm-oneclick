@@ -373,6 +373,7 @@ const defaults = () => ({
   tasks:[],
   posts:[],
   payments:[],
+  expenses:[],
   videos:[],
   plans:[
     {id:uid(),nombre:'',precio:'',moneda:'ARS',periodo:'mes',descripcion:'',servicios:[],destacado:false},
@@ -441,6 +442,8 @@ const TASK_TYPES = {grabacion:'Grabación',edicion:'Edición',guion:'Guión'};
 const TASK_STATES = {pendiente:{l:'Pendiente',c:'b-gray'},progreso:{l:'En progreso',c:'b-amber'},listo:{l:'Listo',c:'b-green'}};
 const POST_STATES = {idea:{l:'Idea',c:'b-gray'},programado:{l:'Programado',c:'b-blue'},publicado:{l:'Publicado',c:'b-green'}};
 const PAY_STATES = {pendiente:{l:'Pendiente',c:'b-amber'},pagado:{l:'Pagado',c:'b-green'},vencido:{l:'Vencido',c:'b-rose'}};
+const GASTO_CATEGORIAS = ['Sueldos y freelancers','Suscripciones y software','Equipamiento','Marketing y publicidad','Otro'];
+const GASTO_ESTADOS = {pendiente:{l:'Pendiente',c:'b-amber'},pagado:{l:'Pagado',c:'b-green'}};
 const PLATFORMS = ['Instagram','TikTok','YouTube','Facebook','LinkedIn','Reel','Story'];
 
 /* ============ NAV ============ */
@@ -453,7 +456,7 @@ const VIEWS = [
   {id:'publicacion',label:'Publicación',ico:I.send,title:'Publicación',sub:'Posproducción y subida de contenido'},
   {id:'metricas',label:'Métricas',ico:I.trend,title:'Métricas de contenido',sub:'Rendimiento de videos por cliente y plataforma'},
   {id:'calendario',label:'Calendario',ico:I.cal,title:'Calendario de contenido',sub:'Publicaciones, entregas y vencimientos'},
-  {id:'pagos',label:'Pagos',ico:I.money,title:'Pagos y cobros',sub:'Facturación y seguimiento de cobros'},
+  {id:'pagos',label:'Finanzas',ico:I.money,title:'Finanzas',sub:'Cobros a clientes y gastos del equipo'},
   {id:'planes',label:'Planes',ico:I.layers,title:'Planes de servicio',sub:'Tus 3 planes editables'},
 ];
 let current='dashboard';
@@ -539,6 +542,18 @@ RENDER.dashboard=function(){
   const proxPosts = state.posts.filter(p=>p.estado!=='publicado').sort((a,b)=>(a.fecha||'')> (b.fecha||'')?1:-1);
   const cur = state.settings.currency;
 
+  const mesActual = todayISO().slice(0,7);
+  const gastosMes = state.expenses.filter(g=>(g.fecha||'').slice(0,7)===mesActual).reduce((a,g)=>a+Number(g.monto||0),0);
+  const gastosRecurrentes = state.expenses.filter(g=>g.recurrente).reduce((a,g)=>a+Number(g.monto||0),0);
+  const rentabilidad = ingreso - gastosRecurrentes;
+
+  const videosMes = state.videos.filter(v=>(v.fecha||'').slice(0,7)===mesActual);
+  const vistasMes = videosMes.reduce((a,v)=>a+Number(v.vistas||0),0);
+  const engagementMes = videosMes.length ? (videosMes.reduce((a,v)=>a+videoEngagement(v),0)/videosMes.length) : 0;
+  const topVideo = (videosMes.length?videosMes:state.videos).slice().sort((a,b)=>Number(b.vistas||0)-Number(a.vistas||0))[0];
+
+  const ultimosGastos = state.expenses.slice().sort((a,b)=>(a.fecha||'')<(b.fecha||'')?1:-1).slice(0,4);
+
   const stat=(ico,col,val,lbl,meta)=>`<div class="stat">
     <div class="s-ico ${col}">${svg(ico)}</div>
     <div class="s-val">${val}</div><div class="s-lbl">${lbl}</div>${meta?`<div class="s-meta">${meta}</div>`:''}</div>`;
@@ -552,12 +567,44 @@ RENDER.dashboard=function(){
       <span class="bn">${n}</span></div>`;
   }).join('');
 
+  const videoDestacadoHTML = topVideo ? `
+    <div class="card">
+      <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:2px">Video destacado${videosMes.length?' del mes':''}</div>
+      <div class="muted" style="font-size:12.5px;margin-bottom:14px">El de mejor alcance entre los cargados</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="avatar ${avatarColor(topVideo.plataforma)}" style="width:44px;height:44px;font-size:15px">${(topVideo.plataforma||'?')[0]}</div>
+        <div style="min-width:0;flex:1">
+          <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(topVideo.titulo||'Sin título')}</div>
+          <div class="muted" style="font-size:12px">${escapeHtml(clientName(topVideo.clientId))} · ${escapeHtml(topVideo.plataforma||'')}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:18px;margin-top:14px">
+        <div><div style="font-family:var(--font-d);font-weight:700;font-size:18px">${Number(topVideo.vistas||0).toLocaleString('es-AR')}</div><div class="muted" style="font-size:11.5px">vistas</div></div>
+        <div><div style="font-family:var(--font-d);font-weight:700;font-size:18px;color:var(--accent)">${videoEngagement(topVideo).toFixed(1)}%</div><div class="muted" style="font-size:11.5px">engagement</div></div>
+        ${topVideo.link?`<div style="margin-left:auto;align-self:center"><a href="${escapeHtml(topVideo.link)}" target="_blank" class="btn btn-ghost btn-sm">Ver</a></div>`:''}
+      </div>
+    </div>` : `<div class="card">
+      <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:6px">Video destacado</div>
+      <p class="muted" style="font-size:13px">Cuando cargues videos en Métricas, acá vas a ver el de mejor rendimiento.</p>
+    </div>`;
+
+  const liGasto = g => `<div class="li"><div class="avatar ${avatarColor(g.categoria)}">${initials(g.categoria)}</div>
+    <div class="li-main"><div class="li-t">${escapeHtml(g.concepto||'Gasto')}</div><div class="li-s">${g.clientId?escapeHtml(clientName(g.clientId)):'General'} · ${fmtDate(g.fecha)}</div></div>
+    <div class="li-r"><div style="font-family:var(--font-d);font-weight:700;color:var(--rose)">${fmtMoney(g.monto,g.moneda||cur)}</div></div></div>`;
+
   C().innerHTML=`
     <div class="grid cols-4">
       ${stat(I.users,'b-green',clientes.length,'Clientes activos', enPipe.length+' en pipeline')}
       ${stat(I.trend,'b-accent',fmtMoney(ingreso,cur),'Ingreso mensual', 'estimado por planes')}
+      ${stat(I.money,'b-rose',fmtMoney(gastosMes,cur),'Gastos este mes', state.expenses.length+' gastos en total')}
+      ${stat(I.trend,rentabilidad>=0?'b-green':'b-rose',fmtMoney(rentabilidad,cur),'Rentabilidad neta / mes','ingreso − gastos recurrentes')}
+    </div>
+
+    <div class="grid cols-4" style="margin-top:16px">
       ${stat(I.film,'b-amber',tareasPend.length,'Tareas pendientes', state.tasks.length+' en total')}
-      ${stat(I.money,'b-rose',fmtMoney(porCobrar,cur),'Por cobrar', state.payments.filter(p=>p.estado==='vencido').length+' vencidos')}
+      ${stat(I.clock,'b-blue',fmtMoney(porCobrar,cur),'Por cobrar', state.payments.filter(p=>p.estado==='vencido').length+' vencidos')}
+      ${stat(I.eye,'b-violet',vistasMes.toLocaleString('es-AR'),'Vistas de contenido / mes', videosMes.length+' videos este mes')}
+      ${stat(I.trend,'b-accent',engagementMes.toFixed(1)+'%','Engagement promedio / mes')}
     </div>
 
     <div class="grid cols-2" style="margin-top:18px">
@@ -580,6 +627,14 @@ RENDER.dashboard=function(){
       <div class="list-card">
         <div class="lc-head">${svg(I.money,'')} Cobros pendientes</div>
         ${state.payments.filter(p=>p.estado!=='pagado').length? state.payments.filter(p=>p.estado!=='pagado').slice(0,4).map(p=>liPay(p)).join('') : emptyMini('Sin cobros pendientes')}
+      </div>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:18px">
+      ${videoDestacadoHTML}
+      <div class="list-card">
+        <div class="lc-head">${svg(I.money,'')} Últimos gastos</div>
+        ${ultimosGastos.length? ultimosGastos.map(liGasto).join('') : emptyMini('Sin gastos registrados')}
       </div>
     </div>`;
 };
@@ -704,22 +759,32 @@ function onboardingLinkModal(id){
 
 RENDER.onboarding=async function(){
   topAction(`<button class="btn btn-ghost" onclick="refreshOnboarding()">${svg(I.check)} Actualizar</button>`);
-  C().innerHTML = emptyMini('Cargando…');
+  setSync('Cargando onboarding…');
   await loadOnboardingSubs();
+  setSync('');
   renderNav();
 
-  const pendCards = onboardingSubs.length ? onboardingSubs.map(s=>{
-    const c = contactById(s.contact_id);
-    const nombre = c ? c.nombre : 'Cliente no encontrado (id '+escapeHtml(s.contact_id)+')';
-    return `<div class="li">
-      <div class="avatar ${avatarColor(nombre)}">${initials(nombre)}</div>
-      <div class="li-main"><div class="li-t">${escapeHtml(nombre)}</div><div class="li-s">Recibido ${fmtDateLong(s.created_at.slice(0,10))}</div></div>
-      <div class="li-r" style="display:flex;gap:6px">
-        <button class="btn btn-ghost btn-sm" onclick="viewSubmission('${s.id}')">Ver</button>
-        ${c?`<button class="btn btn-primary btn-sm" onclick="applyOnboardingSubmission('${s.id}')">Aplicar a ficha</button>`:''}
-        <button class="btn btn-danger btn-sm" onclick="discardSubmission('${s.id}')">${svg(I.trash)}</button>
-      </div></div>`;
-  }).join('') : emptyMini('No hay respuestas nuevas por revisar.');
+  const nSin = state.contacts.filter(c=>!c.onboardingEstado||c.onboardingEstado==='pendiente').length;
+  const nEnv = state.contacts.filter(c=>c.onboardingEstado==='enviado').length;
+  const nComp = state.contacts.filter(c=>c.onboardingEstado==='completado').length;
+  const stat=(ico,col,val,lbl)=>`<div class="stat"><div class="s-ico ${col}">${svg(ico)}</div><div class="s-val">${val}</div><div class="s-lbl">${lbl}</div></div>`;
+
+  const pendHTML = onboardingSubs.length ? `
+    <div class="list-card" style="margin-bottom:22px">
+      <div class="lc-head">${svg(I.clip)} Respuestas por revisar<span class="badge-pill b-amber" style="margin-left:auto"><span class="dot"></span>${onboardingSubs.length}</span></div>
+      ${onboardingSubs.map(s=>{
+        const c = contactById(s.contact_id);
+        const nombre = c ? c.nombre : 'Cliente no encontrado (id '+escapeHtml(s.contact_id)+')';
+        return `<div class="li">
+          <div class="avatar ${avatarColor(nombre)}">${initials(nombre)}</div>
+          <div class="li-main"><div class="li-t">${escapeHtml(nombre)}</div><div class="li-s">Recibido ${fmtDateLong(s.created_at.slice(0,10))}</div></div>
+          <div class="li-r" style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="viewSubmission('${s.id}')">Ver</button>
+            ${c?`<button class="btn btn-primary btn-sm" onclick="applyOnboardingSubmission('${s.id}')">Aplicar a ficha</button>`:''}
+            <button class="btn btn-danger btn-sm" onclick="discardSubmission('${s.id}')">${svg(I.trash)}</button>
+          </div></div>`;
+      }).join('')}
+    </div>` : '';
 
   const rows = state.contacts.length ? state.contacts.map(c=>`
     <tr>
@@ -734,11 +799,12 @@ RENDER.onboarding=async function(){
     </tr>`).join('') : `<tr><td colspan="5">${emptyMini('Todavía no hay clientes cargados.')}</td></tr>`;
 
   C().innerHTML=`
-    <div class="list-card" style="margin-bottom:22px">
-      <div class="lc-head">${svg(I.clip)} Respuestas por revisar</div>
-      ${pendCards}
+    <div class="grid cols-3" style="margin-bottom:18px">
+      ${stat(I.clock,'b-gray',nSin,'Sin enviar')}
+      ${stat(I.send,'b-amber',nEnv,'Enviado, esperando respuesta')}
+      ${stat(I.check,'b-green',nComp,'Completado')}
     </div>
-    <div class="section-head"><h2>Estado por cliente</h2></div>
+    ${pendHTML}
     <div class="table-wrap"><table>
       <thead><tr><th>Cliente</th><th>Estado</th><th>Enviado</th><th>Completado</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
@@ -1323,11 +1389,20 @@ function calMove(n){calCursor=new Date(calCursor.getFullYear(),calCursor.getMont
 function calToday(){calCursor=new Date();RENDER.calendario();}
 function calOpen(type,id){ if(type==='post')postModal(id); else if(type==='task')taskModal(id); else if(type==='pay')payModal(id); }
 
-/* ---- PAGOS ---- */
-let payFilter='all';
+/* ---- FINANZAS: cobros a clientes + gastos del equipo ---- */
+let payFilter='all', finSubview='cobros', gastoFilter='all';
 RENDER.pagos=function(){
-  topAction(`<button class="btn btn-primary" onclick="payModal()">${svg(I.plus)} Nuevo cobro</button>`);
-  // auto-mark vencidos
+  topAction(finSubview==='cobros'
+    ? `<button class="btn btn-primary" onclick="payModal()">${svg(I.plus)} Nuevo cobro</button>`
+    : `<button class="btn btn-primary" onclick="gastoModal()">${svg(I.plus)} Nuevo gasto</button>`);
+  const seg=`<div class="seg" style="margin-bottom:16px">
+    <button class="${finSubview==='cobros'?'active':''}" onclick="finSubview='cobros';RENDER.pagos()">Cobros a clientes</button>
+    <button class="${finSubview==='gastos'?'active':''}" onclick="finSubview='gastos';RENDER.pagos()">Gastos del equipo</button>
+  </div>`;
+  C().innerHTML = seg + (finSubview==='cobros' ? cobrosHTML() : gastosHTML());
+};
+
+function cobrosHTML(){
   state.payments.forEach(p=>{ if(p.estado==='pendiente'&&p.fecha&&p.fecha<todayISO()) p.estado='vencido'; });
   let list=state.payments.slice().sort((a,b)=>(a.fecha||'zz')>(b.fecha||'zz')?1:-1);
   if(payFilter!=='all') list=list.filter(p=>p.estado===payFilter);
@@ -1336,7 +1411,7 @@ RENDER.pagos=function(){
   const totVenc=state.payments.filter(p=>p.estado==='vencido').reduce((a,p)=>a+Number(p.monto||0),0);
   const totPag=state.payments.filter(p=>p.estado==='pagado').reduce((a,p)=>a+Number(p.monto||0),0);
 
-  const seg=`<div class="seg">
+  const filtSeg=`<div class="seg">
     <button class="${payFilter==='all'?'active':''}" onclick="payFilter='all';RENDER.pagos()">Todos</button>
     ${Object.entries(PAY_STATES).map(([k,v])=>`<button class="${payFilter===k?'active':''}" onclick="payFilter='${k}';RENDER.pagos()">${v.l}</button>`).join('')}
   </div>`;
@@ -1351,15 +1426,15 @@ RENDER.pagos=function(){
     </tr>`;
   }).join(''):`<tr><td colspan="6">${emptyMini('Sin cobros registrados.')}</td></tr>`;
 
-  C().innerHTML=`
+  return `
     <div class="grid cols-3" style="margin-bottom:18px">
       <div class="stat"><div class="s-ico b-amber">${svg(I.clock)}</div><div class="s-val">${fmtMoney(totPend,cur)}</div><div class="s-lbl">Pendiente de cobro</div></div>
       <div class="stat"><div class="s-ico b-rose">${svg(I.clock)}</div><div class="s-val">${fmtMoney(totVenc,cur)}</div><div class="s-lbl">Vencido</div></div>
       <div class="stat"><div class="s-ico b-green">${svg(I.check)}</div><div class="s-val">${fmtMoney(totPag,cur)}</div><div class="s-lbl">Cobrado</div></div>
     </div>
-    <div class="toolbar">${seg}</div>
+    <div class="toolbar">${filtSeg}</div>
     <div class="table-wrap"><table><thead><tr><th>Concepto</th><th>Cliente</th><th>Monto</th><th>Vencimiento</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
-};
+}
 function setPayState(id,v){const p=state.payments.find(x=>x.id===id);p.estado=v;if(v==='pagado'&&!p.fechaPago)p.fechaPago=todayISO();save();renderNav();RENDER.pagos();}
 function payModal(id){
   const p=id?state.payments.find(x=>x.id===id):{estado:'pendiente',moneda:state.settings.currency,fecha:todayISO()};
@@ -1384,6 +1459,83 @@ function payModal(id){
     if(obj.estado==='pagado'&&!obj.fechaPago)obj.fechaPago=todayISO();
     if(id){const i=state.payments.findIndex(x=>x.id===id);state.payments[i]=obj;}else state.payments.unshift(obj);
     save();renderNav();RENDER.pagos();toast(id?'Cobro actualizado':'Cobro creado');
+  });
+}
+
+/* ---- GASTOS del equipo (sueldos, editores, suscripciones, herramientas...) ---- */
+function gastosHTML(){
+  let list=state.expenses.slice().sort((a,b)=>(a.fecha||'zz')>(b.fecha||'zz')?1:-1);
+  if(gastoFilter!=='all') list=list.filter(g=>g.categoria===gastoFilter);
+  const cur=state.settings.currency;
+  const totMes = state.expenses.filter(g=>(g.fecha||'').slice(0,7)===todayISO().slice(0,7)).reduce((a,g)=>a+Number(g.monto||0),0);
+  const totRecurrente = state.expenses.filter(g=>g.recurrente).reduce((a,g)=>a+Number(g.monto||0),0);
+  const totGeneral = state.expenses.filter(g=>!g.clientId).reduce((a,g)=>a+Number(g.monto||0),0);
+  const totPend = state.expenses.filter(g=>g.estado==='pendiente').reduce((a,g)=>a+Number(g.monto||0),0);
+
+  const maxCat = Math.max(1,...GASTO_CATEGORIAS.map(cat=>state.expenses.filter(g=>g.categoria===cat).reduce((a,g)=>a+Number(g.monto||0),0)));
+  const catBars = GASTO_CATEGORIAS.filter(cat=>state.expenses.some(g=>g.categoria===cat)).map(cat=>{
+    const sum=state.expenses.filter(g=>g.categoria===cat).reduce((a,g)=>a+Number(g.monto||0),0);
+    return `<div class="bar-row"><span class="bl" style="width:150px">${cat}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(sum/maxCat)*100}%;background:var(--rose)"></div></div>
+      <span class="bn" style="width:auto">${fmtMoney(sum,cur)}</span></div>`;
+  }).join('') || '<p class="muted" style="font-size:12.5px">Todavía no hay gastos cargados.</p>';
+
+  const filtSeg=`<div class="seg">
+    <button class="${gastoFilter==='all'?'active':''}" onclick="gastoFilter='all';RENDER.pagos()">Todas</button>
+    ${GASTO_CATEGORIAS.map(cat=>`<button class="${gastoFilter===cat?'active':''}" onclick="gastoFilter='${escapeHtml(cat)}';RENDER.pagos()">${cat}</button>`).join('')}
+  </div>`;
+  const rows=list.length?list.map(g=>{
+    const st=GASTO_ESTADOS[g.estado]||GASTO_ESTADOS.pagado;
+    return `<tr>
+      <td><div style="font-weight:600">${escapeHtml(g.concepto||'Gasto')}</div><div class="muted" style="font-size:12px">${escapeHtml(g.categoria||'')}${g.recurrente?' · Recurrente':''}</div></td>
+      <td>${g.clientId?escapeHtml(clientName(g.clientId)):'<span class="badge-pill b-gray"><span class="dot"></span>General del equipo</span>'}</td>
+      <td style="font-family:var(--font-d);font-weight:700;color:var(--rose)">${fmtMoney(g.monto,g.moneda||cur)}</td>
+      <td>${fmtDate(g.fecha)}</td>
+      <td><select class="select-mini" onchange="setGastoState('${g.id}',this.value)">${Object.entries(GASTO_ESTADOS).map(([k,v])=>`<option value="${k}" ${g.estado===k?'selected':''}>${v.l}</option>`).join('')}</select></td>
+      <td><div class="t-actions"><button class="icon-btn" onclick="gastoModal('${g.id}')">${svg(I.edit)}</button><button class="icon-btn" onclick="delItem('expenses','${g.id}','pagos')">${svg(I.trash)}</button></div></td>
+    </tr>`;
+  }).join(''):`<tr><td colspan="6">${emptyMini('Sin gastos registrados. Usá "Nuevo gasto" para empezar a llevar el control.')}</td></tr>`;
+
+  return `
+    <div class="grid cols-4" style="margin-bottom:18px">
+      <div class="stat"><div class="s-ico b-rose">${svg(I.money)}</div><div class="s-val">${fmtMoney(totMes,cur)}</div><div class="s-lbl">Gastado este mes</div></div>
+      <div class="stat"><div class="s-ico b-amber">${svg(I.clock)}</div><div class="s-val">${fmtMoney(totRecurrente,cur)}</div><div class="s-lbl">Recurrentes / mes</div></div>
+      <div class="stat"><div class="s-ico b-violet">${svg(I.users)}</div><div class="s-val">${fmtMoney(totGeneral,cur)}</div><div class="s-lbl">Generales del equipo</div></div>
+      <div class="stat"><div class="s-ico b-blue">${svg(I.clock)}</div><div class="s-val">${fmtMoney(totPend,cur)}</div><div class="s-lbl">Pendientes de pagar</div></div>
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:6px">Gastos por categoría</div>
+      <div class="bars">${catBars}</div>
+    </div>
+    <div class="toolbar">${filtSeg}</div>
+    <div class="table-wrap"><table><thead><tr><th>Concepto</th><th>Cliente / equipo</th><th>Monto</th><th>Fecha</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function setGastoState(id,v){const g=state.expenses.find(x=>x.id===id);g.estado=v;save();RENDER.pagos();}
+function gastoModal(id){
+  const g=id?state.expenses.find(x=>x.id===id):{estado:'pagado',moneda:state.settings.currency,fecha:todayISO(),categoria:GASTO_CATEGORIAS[0]};
+  const cliOpts=`<option value="">General del equipo (sin cliente)</option>`+state.contacts.map(c=>`<option value="${c.id}" ${g.clientId===c.id?'selected':''}>${escapeHtml(c.nombre)}</option>`).join('');
+  openModal(id?'Editar gasto':'Nuevo gasto',`
+    <div class="field"><label>Concepto *</label><input id="f_con" value="${escapeHtml(g.concepto||'')}" placeholder="Ej: Editor freelance, Adobe CC, alquiler de estudio..."></div>
+    <div class="field-row">
+      <div class="field"><label>Categoría</label><select id="f_cat">${GASTO_CATEGORIAS.map(cat=>`<option ${g.categoria===cat?'selected':''}>${cat}</option>`).join('')}</select></div>
+      <div class="field"><label>Asignado a</label><select id="f_cli">${cliOpts}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Monto</label><input id="f_monto" type="number" value="${g.monto??''}" placeholder="0"></div>
+      <div class="field"><label>Moneda</label><select id="f_mon"><option ${(g.moneda||'ARS')==='ARS'?'selected':''}>ARS</option><option ${g.moneda==='USD'?'selected':''}>USD</option></select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Fecha</label><input id="f_fecha" type="date" value="${g.fecha||''}"></div>
+      <div class="field"><label>Estado</label><select id="f_est">${Object.entries(GASTO_ESTADOS).map(([k,v])=>`<option value="${k}" ${g.estado===k?'selected':''}>${v.l}</option>`).join('')}</select></div>
+    </div>
+    <div class="check-row"><input type="checkbox" id="f_rec" ${g.recurrente?'checked':''}><label for="f_rec" style="margin:0">Es un gasto recurrente (mensual, ej: suscripción)</label></div>
+    <div class="field"><label>Notas</label><textarea id="f_notas" placeholder="Detalles...">${escapeHtml(g.notas||'')}</textarea></div>
+  `,()=>{
+    const concepto=val('f_con'); if(!concepto){toast('Poné un concepto');return false;}
+    const obj={id:id||uid(),concepto,categoria:val('f_cat'),clientId:val('f_cli'),monto:val('f_monto'),moneda:val('f_mon'),
+      fecha:val('f_fecha'),estado:val('f_est'),recurrente:document.getElementById('f_rec').checked,notas:val('f_notas')};
+    if(id){const i=state.expenses.findIndex(x=>x.id===id);state.expenses[i]=obj;}else state.expenses.unshift(obj);
+    save();renderNav();RENDER.pagos();toast(id?'Gasto actualizado':'Gasto cargado');
   });
 }
 

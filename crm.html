@@ -373,6 +373,7 @@ const defaults = () => ({
   tasks:[],
   posts:[],
   payments:[],
+  videos:[],
   plans:[
     {id:uid(),nombre:'',precio:'',moneda:'ARS',periodo:'mes',descripcion:'',servicios:[],destacado:false},
     {id:uid(),nombre:'',precio:'',moneda:'ARS',periodo:'mes',descripcion:'',servicios:[],destacado:true},
@@ -450,6 +451,7 @@ const VIEWS = [
   {id:'pipeline',label:'Pipeline',ico:I.funnel,title:'Pipeline de ventas',sub:'Arrastrá las tarjetas entre etapas'},
   {id:'produccion',label:'Producción',ico:I.film,title:'Producción',sub:'Grabación, edición y guiones'},
   {id:'publicacion',label:'Publicación',ico:I.send,title:'Publicación',sub:'Posproducción y subida de contenido'},
+  {id:'metricas',label:'Métricas',ico:I.trend,title:'Métricas de contenido',sub:'Rendimiento de videos por cliente y plataforma'},
   {id:'calendario',label:'Calendario',ico:I.cal,title:'Calendario de contenido',sub:'Publicaciones, entregas y vencimientos'},
   {id:'pagos',label:'Pagos',ico:I.money,title:'Pagos y cobros',sub:'Facturación y seguimiento de cobros'},
   {id:'planes',label:'Planes',ico:I.layers,title:'Planes de servicio',sub:'Tus 3 planes editables'},
@@ -941,6 +943,111 @@ function postModal(id){
     const obj={id:id||uid(),titulo,plataforma:val('f_plat'),clientId:val('f_cli'),fecha:val('f_fecha'),estado:val('f_est'),link:val('f_link'),notas:val('f_notas')};
     if(id){const i=state.posts.findIndex(x=>x.id===id);state.posts[i]=obj;}else state.posts.unshift(obj);
     save();RENDER.publicacion();toast(id?'Publicación actualizada':'Publicación creada');
+  });
+}
+
+/* ---- MÉTRICAS (rendimiento de video, carga manual — listo para conectar APIs) ---- */
+const CONNECT_PLATFORMS = ['YouTube','TikTok','Instagram'];
+let metClientFilter='all';
+function videoEngagement(v){
+  const vistas=Number(v.vistas||0);
+  if(!vistas) return 0;
+  return (Number(v.likes||0)+Number(v.comentarios||0)+Number(v.compartidos||0))/vistas*100;
+}
+RENDER.metricas=function(){
+  topAction(`<button class="btn btn-primary" onclick="videoModal()">${svg(I.plus)} Nuevo video</button>`);
+  let list = state.videos.slice();
+  if(metClientFilter!=='all') list=list.filter(v=>v.clientId===metClientFilter);
+  list.sort((a,b)=>(a.fecha||'zz')<(b.fecha||'zz')?1:-1);
+
+  const totVistas = list.reduce((a,v)=>a+Number(v.vistas||0),0);
+  const totLikes = list.reduce((a,v)=>a+Number(v.likes||0),0);
+  const totCom = list.reduce((a,v)=>a+Number(v.comentarios||0),0);
+  const engProm = list.length ? (list.reduce((a,v)=>a+videoEngagement(v),0)/list.length) : 0;
+
+  const clientOpts = `<option value="all">Todos los clientes</option>`+state.contacts.map(c=>`<option value="${c.id}" ${metClientFilter===c.id?'selected':''}>${escapeHtml(c.nombre)}</option>`).join('');
+
+  const maxPlat = Math.max(1,...PLATFORMS.map(pl=>list.filter(v=>v.plataforma===pl).length));
+  const platBars = PLATFORMS.filter(pl=>list.some(v=>v.plataforma===pl)).map(pl=>{
+    const n=list.filter(v=>v.plataforma===pl).length;
+    return `<div class="bar-row"><span class="bl">${pl}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(n/maxPlat)*100}%;background:var(--blue)"></div></div>
+      <span class="bn">${n}</span></div>`;
+  }).join('') || '<p class="muted" style="font-size:12.5px">Todavía no hay videos cargados.</p>';
+
+  const conexionesHTML = metClientFilter!=='all' ? `
+    <div class="card" style="margin-bottom:18px">
+      <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:4px">Cuentas conectadas</div>
+      <p class="muted" style="font-size:12.5px;margin-bottom:14px">Cuando tengas las credenciales de API de cada plataforma, acá se van a poder conectar las cuentas de este cliente para traer las métricas automáticamente. Por ahora, cargalas a mano abajo.</p>
+      ${CONNECT_PLATFORMS.map(pl=>`
+        <div class="li" style="padding:10px 0">
+          <div class="li-main"><div class="li-t">${pl}</div><div class="li-s">Pendiente de credenciales de API</div></div>
+          <div class="li-r"><button class="btn btn-ghost btn-sm" disabled style="opacity:.5;cursor:default">${svg(I.link)} Conectar</button></div>
+        </div>`).join('')}
+    </div>` : '';
+
+  const rows = list.length ? list.map(v=>`
+    <tr>
+      <td><div style="font-weight:600">${escapeHtml(v.titulo||'Sin título')}</div>${v.link?`<a href="${escapeHtml(v.link)}" target="_blank" class="muted" style="font-size:12px;text-decoration:underline">Ver video</a>`:''}</td>
+      <td>${escapeHtml(clientName(v.clientId))}</td>
+      <td><span class="badge-pill b-blue"><span class="dot"></span>${escapeHtml(v.plataforma||'—')}</span></td>
+      <td>${fmtDate(v.fecha)}</td>
+      <td style="font-family:var(--font-d)">${Number(v.vistas||0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--font-d)">${Number(v.likes||0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--font-d)">${Number(v.comentarios||0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--font-d);font-weight:600;color:var(--accent)">${videoEngagement(v).toFixed(1)}%</td>
+      <td><div class="t-actions"><button class="icon-btn" onclick="videoModal('${v.id}')">${svg(I.edit)}</button><button class="icon-btn" onclick="delItem('videos','${v.id}','metricas')">${svg(I.trash)}</button></div></td>
+    </tr>`).join('') : `<tr><td colspan="9">${emptyMini('Todavía no cargaste videos. Usá "Nuevo video" para empezar a registrar métricas.')}</td></tr>`;
+
+  C().innerHTML=`
+    <div class="toolbar">
+      <select class="select-mini" onchange="metClientFilter=this.value;RENDER.metricas()">${clientOpts}</select>
+    </div>
+    <div class="grid cols-4" style="margin-bottom:18px">
+      ${(()=>{const stat=(ico,col,val,lbl)=>`<div class="stat"><div class="s-ico ${col}">${svg(ico)}</div><div class="s-val">${val}</div><div class="s-lbl">${lbl}</div></div>`;
+        return stat(I.film,'b-blue',list.length,'Videos cargados')
+          + stat(I.eye,'b-accent',totVistas.toLocaleString('es-AR'),'Vistas totales')
+          + stat(I.trend,'b-green',(totLikes+totCom).toLocaleString('es-AR'),'Interacciones')
+          + stat(I.trend,'b-amber',engProm.toFixed(1)+'%','Engagement promedio');})()}
+    </div>
+    ${conexionesHTML}
+    <div class="card" style="margin-bottom:18px">
+      <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:6px">Videos por plataforma</div>
+      <div class="bars">${platBars}</div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Video</th><th>Cliente</th><th>Plataforma</th><th>Fecha</th><th>Vistas</th><th>Likes</th><th>Comentarios</th><th>Engagement</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+};
+function videoModal(id){
+  const v=id?state.videos.find(x=>x.id===id):{plataforma:'Instagram',clientId:metClientFilter!=='all'?metClientFilter:''};
+  const cliOpts=`<option value="">Sin cliente</option>`+state.contacts.map(c=>`<option value="${c.id}" ${v.clientId===c.id?'selected':''}>${escapeHtml(c.nombre)}</option>`).join('');
+  openModal(id?'Editar video':'Nuevo video',`
+    <div class="field"><label>Título *</label><input id="f_tit" value="${escapeHtml(v.titulo||'')}" placeholder="Ej: Reel propiedad destacada"></div>
+    <div class="field-row">
+      <div class="field"><label>Cliente</label><select id="f_cli">${cliOpts}</select></div>
+      <div class="field"><label>Plataforma</label><select id="f_plat">${PLATFORMS.map(pl=>`<option ${v.plataforma===pl?'selected':''}>${pl}</option>`).join('')}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Fecha de publicación</label><input id="f_fecha" type="date" value="${v.fecha||''}"></div>
+      <div class="field"><label>Link</label><input id="f_link" value="${escapeHtml(v.link||'')}" placeholder="https://..."></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Vistas</label><input id="f_vistas" type="number" value="${v.vistas??''}" placeholder="0"></div>
+      <div class="field"><label>Likes</label><input id="f_likes" type="number" value="${v.likes??''}" placeholder="0"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Comentarios</label><input id="f_com" type="number" value="${v.comentarios??''}" placeholder="0"></div>
+      <div class="field"><label>Compartidos</label><input id="f_comp" type="number" value="${v.compartidos??''}" placeholder="0"></div>
+    </div>
+    <div class="field"><label>Notas</label><textarea id="f_notas" placeholder="Qué funcionó, hipótesis, aprendizajes...">${escapeHtml(v.notas||'')}</textarea></div>
+  `,()=>{
+    const titulo=val('f_tit'); if(!titulo){toast('Poné un título');return false;}
+    const obj={id:id||uid(),titulo,clientId:val('f_cli'),plataforma:val('f_plat'),fecha:val('f_fecha'),link:val('f_link'),
+      vistas:val('f_vistas'),likes:val('f_likes'),comentarios:val('f_com'),compartidos:val('f_comp'),notas:val('f_notas'),origen:v.origen||'manual'};
+    if(id){const i=state.videos.findIndex(x=>x.id===id);state.videos[i]=obj;}else state.videos.unshift(obj);
+    save();RENDER.metricas();toast(id?'Video actualizado':'Video cargado');
   });
 }
 

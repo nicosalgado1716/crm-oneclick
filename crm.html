@@ -669,7 +669,7 @@ function contactModal(id){
       email:val('f_email'), etapa:val('f_etapa'), planId:val('f_plan')||'', valorMensual:val('f_valor'),
       origen:val('f_origen'), notas:val('f_notas'), creado:c.creado||todayISO(),
       onboardingEstado:c.onboardingEstado, onboardingEnviadoEn:c.onboardingEnviadoEn,
-      onboardingCompletadoEn:c.onboardingCompletadoEn, onboarding:c.onboarding };
+      onboardingCompletadoEn:c.onboardingCompletadoEn, onboarding:c.onboarding, conexiones:c.conexiones };
     if(id){ const i=state.contacts.findIndex(x=>x.id===id); state.contacts[i]=obj; }
     else state.contacts.unshift(obj);
     save(); renderNav(); RENDER.clientes(); toast(id?'Contacto actualizado':'Contacto creado');
@@ -975,16 +975,7 @@ RENDER.metricas=function(){
       <span class="bn">${n}</span></div>`;
   }).join('') || '<p class="muted" style="font-size:12.5px">Todavía no hay videos cargados.</p>';
 
-  const conexionesHTML = metClientFilter!=='all' ? `
-    <div class="card" style="margin-bottom:18px">
-      <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:4px">Cuentas conectadas</div>
-      <p class="muted" style="font-size:12.5px;margin-bottom:14px">Cuando tengas las credenciales de API de cada plataforma, acá se van a poder conectar las cuentas de este cliente para traer las métricas automáticamente. Por ahora, cargalas a mano abajo.</p>
-      ${CONNECT_PLATFORMS.map(pl=>`
-        <div class="li" style="padding:10px 0">
-          <div class="li-main"><div class="li-t">${pl}</div><div class="li-s">Pendiente de credenciales de API</div></div>
-          <div class="li-r"><button class="btn btn-ghost btn-sm" disabled style="opacity:.5;cursor:default">${svg(I.link)} Conectar</button></div>
-        </div>`).join('')}
-    </div>` : '';
+  const conexionesHTML = metClientFilter!=='all' ? renderConexiones(contactById(metClientFilter)) : '';
 
   const rows = list.length ? list.map(v=>`
     <tr>
@@ -1049,6 +1040,135 @@ function videoModal(id){
     if(id){const i=state.videos.findIndex(x=>x.id===id);state.videos[i]=obj;}else state.videos.unshift(obj);
     save();RENDER.metricas();toast(id?'Video actualizado':'Video cargado');
   });
+}
+
+/* ---- Conexiones de API por plataforma (YouTube e Instagram reales; TikTok requiere app propia) ---- */
+function upsertApiVideo(clientId,plataforma,link,data){
+  let existing = state.videos.find(x=>x.clientId===clientId && x.plataforma===plataforma && x.link===link);
+  const obj = Object.assign({
+    id: existing?existing.id:uid(), clientId, plataforma, link,
+    compartidos: existing?existing.compartidos:'', notas: existing?existing.notas:''
+  }, data);
+  if(existing){ const i=state.videos.findIndex(x=>x.id===existing.id); state.videos[i]=obj; }
+  else state.videos.unshift(obj);
+}
+function renderConexiones(c){
+  const rows = [
+    {pl:'YouTube', key:'youtube', conectar:'connectYoutubeModal', sync:'syncYoutube'},
+    {pl:'Instagram', key:'instagram', conectar:'connectInstagramModal', sync:'syncInstagram'},
+    {pl:'TikTok', key:'tiktok', conectar:'connectTiktokModal', sync:null},
+  ].map(r=>{
+    const conf = c.conexiones && c.conexiones[r.key];
+    const conectado = conf && conf.estado==='conectado';
+    return `<div class="li" style="padding:10px 0">
+      <div class="li-main"><div class="li-t">${r.pl}</div><div class="li-s">${conectado?('Conectado'+(conf.ultimaSync?(' · última sync '+fmtDateLong(conf.ultimaSync.slice(0,10))):'')):'No conectado'}</div></div>
+      <div class="li-r" style="display:flex;gap:6px">
+        ${conectado&&r.sync?`<button class="btn btn-ghost btn-sm" onclick="${r.sync}('${c.id}')">Sincronizar</button>`:''}
+        <button class="btn ${conectado?'btn-ghost':'btn-primary'} btn-sm" onclick="${r.conectar}('${c.id}')">${conectado?'Editar':'Conectar'}</button>
+      </div></div>`;
+  }).join('');
+  return `<div class="card" style="margin-bottom:18px">
+    <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:4px">Cuentas conectadas</div>
+    <p class="muted" style="font-size:12.5px;margin-bottom:6px">YouTube e Instagram se conectan con tus propias credenciales de API. TikTok todavía requiere una app propia aprobada por TikTok for Developers.</p>
+    ${rows}
+  </div>`;
+}
+
+function connectYoutubeModal(clientId){
+  const c=contactById(clientId);
+  const conf=(c.conexiones&&c.conexiones.youtube)||{};
+  openModal('Conectar YouTube — '+escapeHtml(c.nombre),`
+    <p class="muted" style="font-size:12.5px">Necesitás una API Key de YouTube Data API v3 (se genera en Google Cloud Console, gratis, sin revisión) y el Channel ID del cliente (YouTube Studio → Configuración → Canal → Info básica del canal).</p>
+    <div class="field"><label>API Key de YouTube</label><input id="f_key" value="${escapeHtml(state.settings.youtubeApiKey||'')}" placeholder="AIza..."></div>
+    <div class="field"><label>Channel ID de este cliente</label><input id="f_chan" value="${escapeHtml(conf.channelId||'')}" placeholder="UCxxxxxxxxxxxxxxxxxxxxxx"></div>
+  `,()=>{
+    const key=val('f_key'), chan=val('f_chan');
+    if(!key||!chan){ toast('Completá la API Key y el Channel ID'); return false; }
+    state.settings.youtubeApiKey=key;
+    c.conexiones=c.conexiones||{};
+    c.conexiones.youtube={ channelId:chan, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
+    save(); RENDER.metricas(); toast('YouTube conectado, sincronizando…');
+    syncYoutube(clientId);
+  },'Conectar y sincronizar');
+}
+async function syncYoutube(clientId){
+  const c=contactById(clientId);
+  const conf=c.conexiones&&c.conexiones.youtube;
+  const key=state.settings.youtubeApiKey;
+  if(!conf||!conf.channelId||!key){ toast('Falta configurar YouTube para este cliente'); return; }
+  toast('Sincronizando YouTube…');
+  try{
+    const chRes=await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${encodeURIComponent(conf.channelId)}&key=${encodeURIComponent(key)}`);
+    const chData=await chRes.json();
+    if(chData.error) throw new Error(chData.error.message);
+    const channel=chData.items&&chData.items[0];
+    if(!channel) throw new Error('No se encontró el canal. Revisá el Channel ID.');
+    const uploadsId=channel.contentDetails.relatedPlaylists.uploads;
+    const plRes=await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=15&playlistId=${encodeURIComponent(uploadsId)}&key=${encodeURIComponent(key)}`);
+    const plData=await plRes.json();
+    if(plData.error) throw new Error(plData.error.message);
+    const videoIds=(plData.items||[]).map(i=>i.contentDetails.videoId).join(',');
+    if(!videoIds){ toast('El canal no tiene videos públicos todavía'); return; }
+    const vRes=await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${videoIds}&key=${encodeURIComponent(key)}`);
+    const vData=await vRes.json();
+    if(vData.error) throw new Error(vData.error.message);
+    (vData.items||[]).forEach(item=>{
+      upsertApiVideo(clientId,'YouTube','https://www.youtube.com/watch?v='+item.id,{
+        titulo:item.snippet.title, fecha:(item.snippet.publishedAt||'').slice(0,10),
+        vistas:item.statistics.viewCount||0, likes:item.statistics.likeCount||0,
+        comentarios:item.statistics.commentCount||0, origen:'api'
+      });
+    });
+    conf.estado='conectado'; conf.ultimaSync=new Date().toISOString();
+    save(); RENDER.metricas();
+    toast('YouTube sincronizado: '+(vData.items||[]).length+' videos');
+  }catch(e){ console.error('Error al sincronizar YouTube:',e); toast('Error al sincronizar YouTube: '+e.message); }
+}
+
+function connectInstagramModal(clientId){
+  const c=contactById(clientId);
+  const conf=(c.conexiones&&c.conexiones.instagram)||{};
+  openModal('Conectar Instagram — '+escapeHtml(c.nombre),`
+    <p class="muted" style="font-size:12.5px">Necesitás un Access Token de la Graph API de Meta y el ID de cuenta de Instagram Business/Creator del cliente. Se generan desde tu app en developers.facebook.com (Graph API Explorer), sobre una cuenta que administres o donde te hayan agregado como tester. Instagram no siempre expone "vistas" vía API pública; traemos likes y comentarios, y vistas cuando estén disponibles.</p>
+    <div class="field"><label>Access Token</label><input id="f_tok" value="${escapeHtml(conf.token||'')}" placeholder="EAAG..."></div>
+    <div class="field"><label>ID de cuenta de Instagram Business</label><input id="f_ig" value="${escapeHtml(conf.igId||'')}" placeholder="1784..."></div>
+  `,()=>{
+    const tok=val('f_tok'), ig=val('f_ig');
+    if(!tok||!ig){ toast('Completá el token y el ID de cuenta'); return false; }
+    c.conexiones=c.conexiones||{};
+    c.conexiones.instagram={ token:tok, igId:ig, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
+    save(); RENDER.metricas(); toast('Instagram conectado, sincronizando…');
+    syncInstagram(clientId);
+  },'Conectar y sincronizar');
+}
+async function syncInstagram(clientId){
+  const c=contactById(clientId);
+  const conf=c.conexiones&&c.conexiones.instagram;
+  if(!conf||!conf.token||!conf.igId){ toast('Falta configurar Instagram para este cliente'); return; }
+  toast('Sincronizando Instagram…');
+  try{
+    const url=`https://graph.facebook.com/v19.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,permalink,timestamp,like_count,comments_count&limit=15&access_token=${encodeURIComponent(conf.token)}`;
+    const res=await fetch(url);
+    const data=await res.json();
+    if(data.error) throw new Error(data.error.message);
+    (data.data||[]).forEach(item=>{
+      upsertApiVideo(clientId,'Instagram',item.permalink||'',{
+        titulo:(item.caption||'Publicación de Instagram').slice(0,80),
+        fecha:(item.timestamp||'').slice(0,10),
+        likes:item.like_count||0, comentarios:item.comments_count||0, origen:'api'
+      });
+    });
+    conf.estado='conectado'; conf.ultimaSync=new Date().toISOString();
+    save(); RENDER.metricas();
+    toast('Instagram sincronizado: '+(data.data||[]).length+' publicaciones');
+  }catch(e){ console.error('Error al sincronizar Instagram:',e); toast('Error al sincronizar Instagram: '+e.message); }
+}
+
+function connectTiktokModal(clientId){
+  const c=contactById(clientId);
+  openModal('Conectar TikTok — '+escapeHtml(c.nombre),`
+    <p style="color:var(--text-2);font-size:13px">TikTok todavía no tiene una forma simple de conectar: su API exige tener una app propia aprobada por TikTok for Developers, un proceso que puede tardar. Por ahora no podemos traer datos en vivo de esta plataforma. En cuanto tengas tu app aprobada, avisanos y activamos la sincronización acá mismo.</p>
+  `,()=>{},'Entendido');
 }
 
 /* ---- CALENDARIO ---- */

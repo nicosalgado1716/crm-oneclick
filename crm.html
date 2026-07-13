@@ -544,8 +544,7 @@ RENDER.dashboard=function(){
 
   const mesActual = todayISO().slice(0,7);
   const gastosMes = state.expenses.filter(g=>(g.fecha||'').slice(0,7)===mesActual).reduce((a,g)=>a+Number(g.monto||0),0);
-  const gastosRecurrentes = state.expenses.filter(g=>g.recurrente).reduce((a,g)=>a+Number(g.monto||0),0);
-  const rentabilidad = ingreso - gastosRecurrentes;
+  const rentabilidad = ingreso - gastosMes;
 
   const videosMes = state.videos.filter(v=>(v.fecha||'').slice(0,7)===mesActual);
   const vistasMes = videosMes.reduce((a,v)=>a+Number(v.vistas||0),0);
@@ -597,7 +596,7 @@ RENDER.dashboard=function(){
       ${stat(I.users,'b-green',clientes.length,'Clientes activos', enPipe.length+' en pipeline')}
       ${stat(I.trend,'b-accent',fmtMoney(ingreso,cur),'Ingreso mensual', 'estimado por planes')}
       ${stat(I.money,'b-rose',fmtMoney(gastosMes,cur),'Gastos este mes', state.expenses.length+' gastos en total')}
-      ${stat(I.trend,rentabilidad>=0?'b-green':'b-rose',fmtMoney(rentabilidad,cur),'Rentabilidad neta / mes','ingreso − gastos recurrentes')}
+      ${stat(I.trend,rentabilidad>=0?'b-green':'b-rose',fmtMoney(rentabilidad,cur),'Rentabilidad neta / mes','ingreso mensual − gastos del mes')}
     </div>
 
     <div class="grid cols-4" style="margin-top:16px">

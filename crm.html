@@ -146,6 +146,8 @@ tbody tr{transition:.12s}
 tbody tr:hover{background:var(--panel-2)}
 .t-name{display:flex;align-items:center;gap:11px}
 .t-actions{display:flex;gap:4px;justify-content:flex-end}
+.col-sticky{position:sticky;right:0;background:var(--panel);box-shadow:-6px 0 8px -6px rgba(0,0,0,.5)}
+tbody tr:hover .col-sticky{background:var(--panel-2)}
 
 /* TOOLBAR */
 .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
@@ -1076,7 +1078,7 @@ RENDER.metricas=function(){
       <td style="font-family:var(--font-d)">${Number(v.guardados||0).toLocaleString('es-AR')}</td>
       <td style="font-family:var(--font-d)">${v.retencionSeg?Number(v.retencionSeg).toFixed(1)+'s':'—'}</td>
       <td style="font-family:var(--font-d);font-weight:600;color:var(--accent)">${videoEngagement(v).toFixed(1)}%</td>
-      <td><div class="t-actions"><button class="icon-btn" onclick="videoModal('${v.id}')">${svg(I.edit)}</button><button class="icon-btn" onclick="delItem('videos','${v.id}','metricas')">${svg(I.trash)}</button></div></td>
+      <td class="col-sticky"><div class="t-actions"><button class="icon-btn" onclick="videoModal('${v.id}')">${svg(I.edit)}</button><button class="icon-btn" onclick="delItem('videos','${v.id}','metricas')">${svg(I.trash)}</button></div></td>
     </tr>`).join('') : `<tr><td colspan="12">${emptyMini('Todavía no cargaste videos. Usá "Nuevo video" para empezar a registrar métricas.')}</td></tr>`;
 
   C().innerHTML=`
@@ -1105,7 +1107,7 @@ RENDER.metricas=function(){
       <select class="select-mini" onchange="metSort=this.value;RENDER.metricas()">${Object.entries(MET_SORTS).map(([k,v])=>`<option value="${k}" ${metSort===k?'selected':''}>${v.l}</option>`).join('')}</select>
     </div>
     <div style="overflow-x:auto"><div class="table-wrap"><table>
-      <thead><tr><th>Video</th><th>Cliente</th><th>Plataforma</th><th>Fecha</th><th>Vistas</th><th>Likes</th><th>Comentarios</th><th>Compartidos</th><th>Guardados</th><th>Retención</th><th>Engagement</th><th></th></tr></thead>
+      <thead><tr><th>Video</th><th>Cliente</th><th>Plataforma</th><th>Fecha</th><th>Vistas</th><th>Likes</th><th>Comentarios</th><th>Compartidos</th><th>Guardados</th><th>Retención</th><th>Engagement</th><th class="col-sticky"></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div></div>`;
 };
@@ -1194,6 +1196,7 @@ function renderConexiones(c){
       <div class="li-main"><div class="li-t">${r.pl}</div><div class="li-s">${conectado?('Conectado'+(conf.ultimaSync?(' · última sync '+fmtDateLong(conf.ultimaSync.slice(0,10))):'')+(conf.desde?(' · desde '+fmtDateLong(conf.desde)):'')):'No conectado'}</div></div>
       <div class="li-r" style="display:flex;gap:6px">
         ${conectado&&r.sync?`<button class="btn btn-ghost btn-sm" onclick="${r.sync}('${c.id}')">Sincronizar</button>`:''}
+        ${conectado&&conf.desde&&state.videos.some(v=>v.clientId===c.id&&v.plataforma===r.pl&&(v.fecha||'')<conf.desde)?`<button class="btn btn-danger btn-sm" onclick="limpiarVideosViejos('${c.id}','${r.pl}','${conf.desde}')">Limpiar anteriores</button>`:''}
         <button class="btn ${conectado?'btn-ghost':'btn-primary'} btn-sm" onclick="${r.conectar}('${c.id}')">${conectado?'Editar':'Conectar'}</button>
       </div></div>`;
   }).join('');
@@ -1202,6 +1205,16 @@ function renderConexiones(c){
     <p class="muted" style="font-size:12.5px;margin-bottom:6px">YouTube, Instagram y Facebook se conectan por separado, cada uno con sus propias credenciales de API (son plataformas distintas con métricas distintas). TikTok todavía requiere una app propia aprobada por TikTok for Developers.</p>
     ${rows}
   </div>`;
+}
+function limpiarVideosViejos(clientId, plataforma, desde){
+  const n = state.videos.filter(v=>v.clientId===clientId && v.plataforma===plataforma && (v.fecha||'')<desde).length;
+  confirmModal('¿Borrar videos anteriores al '+fmtDateLong(desde)+'?',
+    `Se van a eliminar ${n} video(s) de ${plataforma} cargados antes de esa fecha. Los que ya estén dentro del rango no se tocan. Esta acción no se puede deshacer.`,
+    ()=>{
+      state.videos = state.videos.filter(v=>!(v.clientId===clientId && v.plataforma===plataforma && (v.fecha||'')<desde));
+      save(); RENDER.metricas();
+      toast(n+' video(s) eliminados');
+    });
 }
 
 function connectYoutubeModal(clientId){

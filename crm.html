@@ -1261,12 +1261,17 @@ async function syncInstagram(clientId){
   if(!conf||!conf.token||!conf.igId){ toast('Falta configurar Instagram para este cliente'); return; }
   toast('Sincronizando Instagram…');
   try{
-    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=15&access_token=${encodeURIComponent(conf.token)}`;
+    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=25&access_token=${encodeURIComponent(conf.token)}`;
     const res=await fetch(url);
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
+    // Las fotos y los carruseles no tienen "vistas" en Instagram (eso solo existe
+    // para video: Reels y videos de feed) — se sincroniza solo contenido de video
+    // para que todo lo que aparezca en la tabla tenga vistas disponibles.
+    const soloVideo = (data.data||[]).filter(item=>item.media_type==='VIDEO');
+    const omitidos = (data.data||[]).length - soloVideo.length;
     let sinInsights=0;
-    for(const item of (data.data||[])){
+    for(const item of soloVideo){
       const ins = await fetchIgInsights(item.id, item.media_product_type, conf.token);
       if(!ins) sinInsights++;
       upsertApiVideo(clientId,'Instagram',item.permalink||'',{
@@ -1282,7 +1287,9 @@ async function syncInstagram(clientId){
     }
     conf.estado='conectado'; conf.ultimaSync=new Date().toISOString();
     save(); RENDER.metricas();
-    toast('Instagram sincronizado: '+(data.data||[]).length+' publicaciones'+(sinInsights?` (${sinInsights} sin métricas detalladas — revisá el permiso instagram_manage_insights del token)`:''));
+    toast('Instagram sincronizado: '+soloVideo.length+' videos'
+      +(omitidos?` (se omitieron ${omitidos} fotos/carruseles, que no tienen vistas)`:'')
+      +(sinInsights?` — ${sinInsights} sin métricas detalladas, revisá el permiso instagram_manage_insights`:''));
   }catch(e){ console.error('Error al sincronizar Instagram:',e); toast('Error al sincronizar Instagram: '+e.message); }
 }
 
@@ -1310,7 +1317,7 @@ function connectFacebookModal(clientId){
     syncFacebook(clientId);
   },'Conectar y sincronizar');
 }
-const FB_INSIGHT_METRICS = ['total_video_views','total_video_avg_time_watched'];
+const FB_INSIGHT_METRICS = ['total_video_views','blue_reels_play_count','total_video_avg_time_watched'];
 // Mismo motivo que en Instagram: se pide cada métrica por separado para que una
 // sola métrica deprecada/no disponible no tire abajo toda la sincronización.
 async function fetchFbVideoInsights(videoId, token){
@@ -1345,7 +1352,7 @@ async function syncFacebook(clientId){
         fecha:(item.created_time||'').slice(0,10),
         likes:(item.likes&&item.likes.summary&&item.likes.summary.total_count)||0,
         comentarios:(item.comments&&item.comments.summary&&item.comments.summary.total_count)||0,
-        vistas:ins?(ins.total_video_views??''):'',
+        vistas:ins?(ins.total_video_views??ins.blue_reels_play_count??''):'',
         retencionSeg:ins&&ins.total_video_avg_time_watched!=null?(ins.total_video_avg_time_watched/1000):'',
         origen:'api'
       });

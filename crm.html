@@ -1017,17 +1017,32 @@ function postModal(id){
 
 /* ---- MÉTRICAS (rendimiento de video, carga manual — listo para conectar APIs) ---- */
 const CONNECT_PLATFORMS = ['YouTube','TikTok','Instagram'];
-let metClientFilter='all';
+let metClientFilter='all', metPlatFilter='all', metSort='fecha';
 function videoEngagement(v){
   const vistas=Number(v.vistas||0);
   if(!vistas) return 0;
   return (Number(v.likes||0)+Number(v.comentarios||0)+Number(v.compartidos||0)+Number(v.guardados||0))/vistas*100;
 }
+function fmtFechaHora(v){
+  if(v.publicadoEn){
+    const d = new Date(v.publicadoEn);
+    if(!isNaN(d)) return d.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+  }
+  return fmtDate(v.fecha);
+}
+const MET_SORTS = {
+  fecha:{l:'Fecha (recientes primero)', fn:(a,b)=>(a.fecha||'')<(b.fecha||'')?1:-1},
+  vistas:{l:'Vistas', fn:(a,b)=>Number(b.vistas||0)-Number(a.vistas||0)},
+  likes:{l:'Likes', fn:(a,b)=>Number(b.likes||0)-Number(a.likes||0)},
+  comentarios:{l:'Comentarios', fn:(a,b)=>Number(b.comentarios||0)-Number(a.comentarios||0)},
+  engagement:{l:'Engagement', fn:(a,b)=>videoEngagement(b)-videoEngagement(a)}
+};
 RENDER.metricas=function(){
   topAction(`<button class="btn btn-primary" onclick="videoModal()">${svg(I.plus)} Nuevo video</button>`);
   let list = state.videos.slice();
   if(metClientFilter!=='all') list=list.filter(v=>v.clientId===metClientFilter);
-  list.sort((a,b)=>(a.fecha||'zz')<(b.fecha||'zz')?1:-1);
+  if(metPlatFilter!=='all') list=list.filter(v=>v.plataforma===metPlatFilter);
+  list.sort(MET_SORTS[metSort]?MET_SORTS[metSort].fn:MET_SORTS.fecha.fn);
 
   const totVistas = list.reduce((a,v)=>a+Number(v.vistas||0),0);
   const totLikes = list.reduce((a,v)=>a+Number(v.likes||0),0);
@@ -1053,7 +1068,7 @@ RENDER.metricas=function(){
       <td><div style="font-weight:600">${escapeHtml(v.titulo||'Sin título')}</div>${v.link?`<a href="${escapeHtml(v.link)}" target="_blank" class="muted" style="font-size:12px;text-decoration:underline">Ver video</a>`:''}</td>
       <td>${escapeHtml(clientName(v.clientId))}</td>
       <td><span class="badge-pill ${platformBadge(v.plataforma)}"><span class="dot"></span>${escapeHtml(v.plataforma||'—')}</span></td>
-      <td>${fmtDate(v.fecha)}</td>
+      <td class="muted" style="white-space:nowrap">${fmtFechaHora(v)}</td>
       <td style="font-family:var(--font-d)">${Number(v.vistas||0).toLocaleString('es-AR')}</td>
       <td style="font-family:var(--font-d)">${Number(v.likes||0).toLocaleString('es-AR')}</td>
       <td style="font-family:var(--font-d)">${Number(v.comentarios||0).toLocaleString('es-AR')}</td>
@@ -1079,6 +1094,15 @@ RENDER.metricas=function(){
     <div class="card" style="margin-bottom:18px">
       <div style="font-family:var(--font-d);font-weight:600;font-size:15px;margin-bottom:6px">Videos por plataforma</div>
       <div class="bars">${platBars}</div>
+    </div>
+    <div class="toolbar">
+      <div class="seg">
+        <button class="${metPlatFilter==='all'?'active':''}" onclick="metPlatFilter='all';RENDER.metricas()">Todas</button>
+        ${PLATFORMS.filter(pl=>state.videos.some(v=>v.plataforma===pl)).map(pl=>`<button class="${metPlatFilter===pl?'active':''}" onclick="metPlatFilter='${pl}';RENDER.metricas()">${pl}</button>`).join('')}
+      </div>
+      <div class="spacer" style="flex:1"></div>
+      <span class="muted" style="font-size:12.5px">Ordenar por</span>
+      <select class="select-mini" onchange="metSort=this.value;RENDER.metricas()">${Object.entries(MET_SORTS).map(([k,v])=>`<option value="${k}" ${metSort===k?'selected':''}>${v.l}</option>`).join('')}</select>
     </div>
     <div style="overflow-x:auto"><div class="table-wrap"><table>
       <thead><tr><th>Video</th><th>Cliente</th><th>Plataforma</th><th>Fecha</th><th>Vistas</th><th>Likes</th><th>Comentarios</th><th>Compartidos</th><th>Guardados</th><th>Retención</th><th>Engagement</th><th></th></tr></thead>
@@ -1122,12 +1146,29 @@ function videoModal(id){
 }
 
 /* ---- Conexiones de API por plataforma (YouTube e Instagram reales; TikTok requiere app propia) ---- */
+// Sigue la paginación de la Graph API (paging.next) para traer todo el historial,
+// no solo la primera página, con un tope de seguridad para no pedir infinito.
+async function fetchAllPages(url, maxPages=6){
+  let results = [];
+  let next = url;
+  let pages = 0;
+  while(next && pages < maxPages){
+    const res = await fetch(next);
+    const data = await res.json();
+    if(data.error) throw new Error(data.error.message);
+    results = results.concat(data.data||[]);
+    next = data.paging && data.paging.next;
+    pages++;
+  }
+  return results;
+}
 function upsertApiVideo(clientId,plataforma,link,data){
   let existing = state.videos.find(x=>x.clientId===clientId && x.plataforma===plataforma && x.link===link);
   const obj = Object.assign({
     id: existing?existing.id:uid(), clientId, plataforma, link,
     compartidos: existing?existing.compartidos:'', guardados: existing?existing.guardados:'',
-    retencionSeg: existing?existing.retencionSeg:'', notas: existing?existing.notas:''
+    retencionSeg: existing?existing.retencionSeg:'', publicadoEn: existing?existing.publicadoEn:'',
+    notas: existing?existing.notas:''
   }, data);
   if(existing){ const i=state.videos.findIndex(x=>x.id===existing.id); state.videos[i]=obj; }
   else state.videos.unshift(obj);
@@ -1185,24 +1226,36 @@ async function syncYoutube(clientId){
     const channel=chData.items&&chData.items[0];
     if(!channel) throw new Error('No se encontró el canal. Revisá el Channel ID.');
     const uploadsId=channel.contentDetails.relatedPlaylists.uploads;
-    const plRes=await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=15&playlistId=${encodeURIComponent(uploadsId)}&key=${encodeURIComponent(key)}`);
-    const plData=await plRes.json();
-    if(plData.error) throw new Error(plData.error.message);
-    const videoIds=(plData.items||[]).map(i=>i.contentDetails.videoId).join(',');
-    if(!videoIds){ toast('El canal no tiene videos públicos todavía'); return; }
-    const vRes=await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${videoIds}&key=${encodeURIComponent(key)}`);
-    const vData=await vRes.json();
-    if(vData.error) throw new Error(vData.error.message);
-    (vData.items||[]).forEach(item=>{
-      upsertApiVideo(clientId,'YouTube','https://www.youtube.com/watch?v='+item.id,{
-        titulo:item.snippet.title, fecha:(item.snippet.publishedAt||'').slice(0,10),
-        vistas:item.statistics.viewCount||0, likes:item.statistics.likeCount||0,
-        comentarios:item.statistics.commentCount||0, origen:'api'
+    // Recorre todas las páginas de la playlist de subidos (no solo las primeras 15).
+    let videoIds=[]; let pageToken=''; let pages=0;
+    do{
+      const plRes=await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${encodeURIComponent(uploadsId)}&key=${encodeURIComponent(key)}${pageToken?'&pageToken='+pageToken:''}`);
+      const plData=await plRes.json();
+      if(plData.error) throw new Error(plData.error.message);
+      videoIds = videoIds.concat((plData.items||[]).map(i=>i.contentDetails.videoId));
+      pageToken = plData.nextPageToken||'';
+      pages++;
+    }while(pageToken && pages<6);
+    if(!videoIds.length){ toast('El canal no tiene videos públicos todavía'); return; }
+    // La API de videos.list acepta hasta 50 IDs por llamada, así que se piden en tandas.
+    let total=0;
+    for(let i=0;i<videoIds.length;i+=50){
+      const tanda=videoIds.slice(i,i+50);
+      const vRes=await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${tanda.join(',')}&key=${encodeURIComponent(key)}`);
+      const vData=await vRes.json();
+      if(vData.error) throw new Error(vData.error.message);
+      (vData.items||[]).forEach(item=>{
+        upsertApiVideo(clientId,'YouTube','https://www.youtube.com/watch?v='+item.id,{
+          titulo:item.snippet.title, fecha:(item.snippet.publishedAt||'').slice(0,10), publicadoEn:item.snippet.publishedAt||'',
+          vistas:item.statistics.viewCount||0, likes:item.statistics.likeCount||0,
+          comentarios:item.statistics.commentCount||0, origen:'api'
+        });
+        total++;
       });
-    });
+    }
     conf.estado='conectado'; conf.ultimaSync=new Date().toISOString();
     save(); RENDER.metricas();
-    toast('YouTube sincronizado: '+(vData.items||[]).length+' videos');
+    toast('YouTube sincronizado: '+total+' videos');
   }catch(e){ console.error('Error al sincronizar YouTube:',e); toast('Error al sincronizar YouTube: '+e.message); }
 }
 
@@ -1261,22 +1314,20 @@ async function syncInstagram(clientId){
   if(!conf||!conf.token||!conf.igId){ toast('Falta configurar Instagram para este cliente'); return; }
   toast('Sincronizando Instagram…');
   try{
-    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=25&access_token=${encodeURIComponent(conf.token)}`;
-    const res=await fetch(url);
-    const data=await res.json();
-    if(data.error) throw new Error(data.error.message);
+    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=50&access_token=${encodeURIComponent(conf.token)}`;
+    const allItems = await fetchAllPages(url);
     // Las fotos y los carruseles no tienen "vistas" en Instagram (eso solo existe
     // para video: Reels y videos de feed) — se sincroniza solo contenido de video
     // para que todo lo que aparezca en la tabla tenga vistas disponibles.
-    const soloVideo = (data.data||[]).filter(item=>item.media_type==='VIDEO');
-    const omitidos = (data.data||[]).length - soloVideo.length;
+    const soloVideo = allItems.filter(item=>item.media_type==='VIDEO');
+    const omitidos = allItems.length - soloVideo.length;
     let sinInsights=0;
     for(const item of soloVideo){
       const ins = await fetchIgInsights(item.id, item.media_product_type, conf.token);
       if(!ins) sinInsights++;
       upsertApiVideo(clientId,'Instagram',item.permalink||'',{
         titulo:(item.caption||'Publicación de Instagram').slice(0,80),
-        fecha:(item.timestamp||'').slice(0,10),
+        fecha:(item.timestamp||'').slice(0,10), publicadoEn:item.timestamp||'',
         likes:item.like_count||0, comentarios:item.comments_count||0,
         vistas:ins?(ins.views??ins.plays??ins.video_views??''):'',
         compartidos:ins?(ins.shares??''):'',
@@ -1339,17 +1390,15 @@ async function syncFacebook(clientId){
   if(!conf||!conf.token||!conf.pageId){ toast('Falta configurar Facebook para este cliente'); return; }
   toast('Sincronizando Facebook…');
   try{
-    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=15&access_token=${encodeURIComponent(conf.token)}`;
-    const res=await fetch(url);
-    const data=await res.json();
-    if(data.error) throw new Error(data.error.message);
+    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=50&access_token=${encodeURIComponent(conf.token)}`;
+    const allItems = await fetchAllPages(url);
     let sinInsights=0;
-    for(const item of (data.data||[])){
+    for(const item of allItems){
       const ins = await fetchFbVideoInsights(item.id, conf.token);
       if(!ins) sinInsights++;
       upsertApiVideo(clientId,'Facebook','https://www.facebook.com'+(item.permalink_url||''),{
         titulo:(item.title||item.description||'Video de Facebook').slice(0,80),
-        fecha:(item.created_time||'').slice(0,10),
+        fecha:(item.created_time||'').slice(0,10), publicadoEn:item.created_time||'',
         likes:(item.likes&&item.likes.summary&&item.likes.summary.total_count)||0,
         comentarios:(item.comments&&item.comments.summary&&item.comments.summary.total_count)||0,
         vistas:ins?(ins.total_video_views??ins.blue_reels_play_count??''):'',
@@ -1359,7 +1408,7 @@ async function syncFacebook(clientId){
     }
     conf.estado='conectado'; conf.ultimaSync=new Date().toISOString();
     save(); RENDER.metricas();
-    toast('Facebook sincronizado: '+(data.data||[]).length+' videos'+(sinInsights?` (${sinInsights} sin métricas detalladas — revisá el permiso read_insights del token)`:''));
+    toast('Facebook sincronizado: '+allItems.length+' videos'+(sinInsights?` (${sinInsights} sin métricas detalladas — revisá el permiso read_insights del token)`:''));
   }catch(e){ console.error('Error al sincronizar Facebook:',e); toast('Error al sincronizar Facebook: '+e.message); }
 }
 

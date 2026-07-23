@@ -1148,15 +1148,23 @@ function videoModal(id){
 /* ---- Conexiones de API por plataforma (YouTube e Instagram reales; TikTok requiere app propia) ---- */
 // Sigue la paginación de la Graph API (paging.next) para traer todo el historial,
 // no solo la primera página, con un tope de seguridad para no pedir infinito.
-async function fetchAllPages(url, maxPages=6){
+// opts.cutoff (yyyy-mm-dd) + opts.dateOf(item)=>yyyy-mm-dd: si se pasan, corta la
+// paginación apenas encuentra un item más viejo que el corte (los resultados vienen
+// del más nuevo al más viejo), para no seguir pidiendo páginas de contenido que
+// después se va a descartar igual.
+async function fetchAllPages(url, opts={}){
+  const { maxPages=6, cutoff=null, dateOf=null } = opts;
   let results = [];
   let next = url;
   let pages = 0;
-  while(next && pages < maxPages){
+  let stop = false;
+  while(next && pages < maxPages && !stop){
     const res = await fetch(next);
     const data = await res.json();
     if(data.error) throw new Error(data.error.message);
-    results = results.concat(data.data||[]);
+    const items = data.data||[];
+    results = results.concat(items);
+    if(cutoff && dateOf && items.some(it=>{ const d=dateOf(it); return d && d<cutoff; })) stop=true;
     next = data.paging && data.paging.next;
     pages++;
   }
@@ -1183,7 +1191,7 @@ function renderConexiones(c){
     const conf = c.conexiones && c.conexiones[r.key];
     const conectado = conf && conf.estado==='conectado';
     return `<div class="li" style="padding:10px 0">
-      <div class="li-main"><div class="li-t">${r.pl}</div><div class="li-s">${conectado?('Conectado'+(conf.ultimaSync?(' · última sync '+fmtDateLong(conf.ultimaSync.slice(0,10))):'')):'No conectado'}</div></div>
+      <div class="li-main"><div class="li-t">${r.pl}</div><div class="li-s">${conectado?('Conectado'+(conf.ultimaSync?(' · última sync '+fmtDateLong(conf.ultimaSync.slice(0,10))):'')+(conf.desde?(' · desde '+fmtDateLong(conf.desde)):'')):'No conectado'}</div></div>
       <div class="li-r" style="display:flex;gap:6px">
         ${conectado&&r.sync?`<button class="btn btn-ghost btn-sm" onclick="${r.sync}('${c.id}')">Sincronizar</button>`:''}
         <button class="btn ${conectado?'btn-ghost':'btn-primary'} btn-sm" onclick="${r.conectar}('${c.id}')">${conectado?'Editar':'Conectar'}</button>
@@ -1203,12 +1211,14 @@ function connectYoutubeModal(clientId){
     <p class="muted" style="font-size:12.5px">Necesitás una API Key de YouTube Data API v3 (se genera en Google Cloud Console, gratis, sin revisión) y el Channel ID del cliente (YouTube Studio → Configuración → Canal → Info básica del canal).</p>
     <div class="field"><label>API Key de YouTube</label><input id="f_key" value="${escapeHtml(state.settings.youtubeApiKey||'')}" placeholder="AIza..."></div>
     <div class="field"><label>Channel ID de este cliente</label><input id="f_chan" value="${escapeHtml(conf.channelId||'')}" placeholder="UCxxxxxxxxxxxxxxxxxxxxxx"></div>
+    <div class="field"><label>Sincronizar desde (opcional)</label><input id="f_desde" type="date" value="${conf.desde||''}"></div>
+    <p class="muted" style="font-size:11.5px;margin-top:-8px">Si lo dejás vacío trae todo el historial disponible. Con una fecha, ignora todo lo publicado antes.</p>
   `,()=>{
-    const key=val('f_key'), chan=val('f_chan');
+    const key=val('f_key'), chan=val('f_chan'), desde=val('f_desde');
     if(!key||!chan){ toast('Completá la API Key y el Channel ID'); return false; }
     state.settings.youtubeApiKey=key;
     c.conexiones=c.conexiones||{};
-    c.conexiones.youtube={ channelId:chan, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
+    c.conexiones.youtube={ channelId:chan, desde, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
     save(); RENDER.metricas(); toast('YouTube conectado, sincronizando…');
     syncYoutube(clientId);
   },'Conectar y sincronizar');
@@ -1227,16 +1237,22 @@ async function syncYoutube(clientId){
     if(!channel) throw new Error('No se encontró el canal. Revisá el Channel ID.');
     const uploadsId=channel.contentDetails.relatedPlaylists.uploads;
     // Recorre todas las páginas de la playlist de subidos (no solo las primeras 15).
-    let videoIds=[]; let pageToken=''; let pages=0;
+    // Si hay fecha de corte, corta apenas ve un video más viejo (vienen del más nuevo
+    // al más viejo) para no seguir pidiendo páginas de contenido que se va a descartar.
+    let videoIds=[]; let pageToken=''; let pages=0; let stop=false;
     do{
       const plRes=await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${encodeURIComponent(uploadsId)}&key=${encodeURIComponent(key)}${pageToken?'&pageToken='+pageToken:''}`);
       const plData=await plRes.json();
       if(plData.error) throw new Error(plData.error.message);
-      videoIds = videoIds.concat((plData.items||[]).map(i=>i.contentDetails.videoId));
+      (plData.items||[]).forEach(i=>{
+        const pub=(i.contentDetails.videoPublishedAt||'').slice(0,10);
+        if(conf.desde && pub && pub<conf.desde){ stop=true; return; }
+        videoIds.push(i.contentDetails.videoId);
+      });
       pageToken = plData.nextPageToken||'';
       pages++;
-    }while(pageToken && pages<6);
-    if(!videoIds.length){ toast('El canal no tiene videos públicos todavía'); return; }
+    }while(pageToken && pages<6 && !stop);
+    if(!videoIds.length){ toast('No hay videos públicos en ese rango de fechas'); return; }
     // La API de videos.list acepta hasta 50 IDs por llamada, así que se piden en tandas.
     let total=0;
     for(let i=0;i<videoIds.length;i+=50){
@@ -1274,11 +1290,13 @@ function connectInstagramModal(clientId){
     <p class="muted" style="font-size:12.5px">Traemos likes, comentarios, vistas, compartidos y guardados. Para Reels, además el tiempo de reproducción promedio (lo más cercano a "retención" que expone Meta).</p>
     <div class="field"><label>Access Token</label><input id="f_tok" value="${escapeHtml(conf.token||'')}" placeholder="EAAG..."></div>
     <div class="field"><label>ID de cuenta de Instagram Business</label><input id="f_ig" value="${escapeHtml(conf.igId||'')}" placeholder="1784..."></div>
+    <div class="field"><label>Sincronizar desde (opcional)</label><input id="f_desde" type="date" value="${conf.desde||''}"></div>
+    <p class="muted" style="font-size:11.5px;margin-top:-8px">Si lo dejás vacío trae todo el historial disponible. Con una fecha, ignora todo lo publicado antes.</p>
   `,()=>{
-    const tok=val('f_tok'), ig=val('f_ig');
+    const tok=val('f_tok'), ig=val('f_ig'), desde=val('f_desde');
     if(!tok||!ig){ toast('Completá el token y el ID de cuenta'); return false; }
     c.conexiones=c.conexiones||{};
-    c.conexiones.instagram={ token:tok, igId:ig, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
+    c.conexiones.instagram={ token:tok, igId:ig, desde, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
     save(); RENDER.metricas(); toast('Instagram conectado, sincronizando…');
     syncInstagram(clientId);
   },'Conectar y sincronizar');
@@ -1315,12 +1333,13 @@ async function syncInstagram(clientId){
   toast('Sincronizando Instagram…');
   try{
     const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=50&access_token=${encodeURIComponent(conf.token)}`;
-    const allItems = await fetchAllPages(url);
+    const allItems = await fetchAllPages(url, { cutoff: conf.desde||null, dateOf: it=>(it.timestamp||'').slice(0,10) });
+    const enRango = conf.desde ? allItems.filter(it=>(it.timestamp||'').slice(0,10)>=conf.desde) : allItems;
     // Las fotos y los carruseles no tienen "vistas" en Instagram (eso solo existe
     // para video: Reels y videos de feed) — se sincroniza solo contenido de video
     // para que todo lo que aparezca en la tabla tenga vistas disponibles.
-    const soloVideo = allItems.filter(item=>item.media_type==='VIDEO');
-    const omitidos = allItems.length - soloVideo.length;
+    const soloVideo = enRango.filter(item=>item.media_type==='VIDEO');
+    const omitidos = enRango.length - soloVideo.length;
     let sinInsights=0;
     for(const item of soloVideo){
       const ins = await fetchIgInsights(item.id, item.media_product_type, conf.token);
@@ -1359,11 +1378,13 @@ function connectFacebookModal(clientId){
     <p class="muted" style="font-size:12.5px">Traemos vistas, likes, comentarios y compartidos de sus videos. Facebook no expone "guardados" para videos vía API pública, así que ese campo queda vacío acá (si querés cargarlo a mano, podés editarlo en la tabla).</p>
     <div class="field"><label>Page Access Token</label><input id="f_tok" value="${escapeHtml(conf.token||'')}" placeholder="EAAG..."></div>
     <div class="field"><label>ID de la Página de Facebook</label><input id="f_page" value="${escapeHtml(conf.pageId||'')}" placeholder="1023..."></div>
+    <div class="field"><label>Sincronizar desde (opcional)</label><input id="f_desde" type="date" value="${conf.desde||''}"></div>
+    <p class="muted" style="font-size:11.5px;margin-top:-8px">Si lo dejás vacío trae todo el historial disponible. Con una fecha, ignora todo lo publicado antes.</p>
   `,()=>{
-    const tok=val('f_tok'), page=val('f_page');
+    const tok=val('f_tok'), page=val('f_page'), desde=val('f_desde');
     if(!tok||!page){ toast('Completá el token y el ID de Página'); return false; }
     c.conexiones=c.conexiones||{};
-    c.conexiones.facebook={ token:tok, pageId:page, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
+    c.conexiones.facebook={ token:tok, pageId:page, desde, estado:'conectado', ultimaSync:conf.ultimaSync||'' };
     save(); RENDER.metricas(); toast('Facebook conectado, sincronizando…');
     syncFacebook(clientId);
   },'Conectar y sincronizar');
@@ -1391,7 +1412,8 @@ async function syncFacebook(clientId){
   toast('Sincronizando Facebook…');
   try{
     const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=50&access_token=${encodeURIComponent(conf.token)}`;
-    const allItems = await fetchAllPages(url);
+    const pageItems = await fetchAllPages(url, { cutoff: conf.desde||null, dateOf: it=>(it.created_time||'').slice(0,10) });
+    const allItems = conf.desde ? pageItems.filter(it=>(it.created_time||'').slice(0,10)>=conf.desde) : pageItems;
     let sinInsights=0;
     for(const item of allItems){
       const ins = await fetchFbVideoInsights(item.id, conf.token);

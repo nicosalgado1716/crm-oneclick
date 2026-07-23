@@ -445,6 +445,10 @@ const PAY_STATES = {pendiente:{l:'Pendiente',c:'b-amber'},pagado:{l:'Pagado',c:'
 const GASTO_CATEGORIAS = ['Sueldos y freelancers','Suscripciones y software','Equipamiento','Marketing y publicidad','Otro'];
 const GASTO_ESTADOS = {pendiente:{l:'Pendiente',c:'b-amber'},pagado:{l:'Pagado',c:'b-green'}};
 const PLATFORMS = ['Instagram','TikTok','YouTube','Facebook','LinkedIn','Reel','Story'];
+const PLATFORM_BADGE = {Instagram:'b-rose',Facebook:'b-blue',YouTube:'b-accent',TikTok:'b-gray',LinkedIn:'b-violet'};
+const platformBadge = pl => PLATFORM_BADGE[pl] || avatarColor(pl);
+const BADGE_TO_VAR = {'b-blue':'var(--blue)','b-violet':'var(--violet)','b-amber':'var(--amber)','b-rose':'var(--rose)','b-green':'var(--green)','b-accent':'var(--accent)','b-gray':'var(--text-3)'};
+const platformColorVar = pl => BADGE_TO_VAR[platformBadge(pl)] || 'var(--blue)';
 
 /* ============ NAV ============ */
 const VIEWS = [
@@ -977,7 +981,7 @@ RENDER.publicacion=function(){
     const st=POST_STATES[p.estado]||POST_STATES.idea;
     return `<tr>
       <td><div style="font-weight:600">${escapeHtml(p.titulo||'Sin título')}</div>${p.link?`<a href="${escapeHtml(p.link)}" target="_blank" class="muted" style="font-size:12px;text-decoration:underline">Ver enlace</a>`:''}</td>
-      <td><span class="badge-pill b-blue"><span class="dot"></span>${escapeHtml(p.plataforma||'—')}</span></td>
+      <td><span class="badge-pill ${platformBadge(p.plataforma)}"><span class="dot"></span>${escapeHtml(p.plataforma||'—')}</span></td>
       <td>${escapeHtml(clientName(p.clientId))}</td>
       <td>${fmtDate(p.fecha)}</td>
       <td><select class="select-mini" onchange="setPostState('${p.id}',this.value)">${Object.entries(POST_STATES).map(([k,v])=>`<option value="${k}" ${p.estado===k?'selected':''}>${v.l}</option>`).join('')}</select></td>
@@ -1038,7 +1042,7 @@ RENDER.metricas=function(){
   const platBars = PLATFORMS.filter(pl=>list.some(v=>v.plataforma===pl)).map(pl=>{
     const n=list.filter(v=>v.plataforma===pl).length;
     return `<div class="bar-row"><span class="bl">${pl}</span>
-      <div class="bar-track"><div class="bar-fill" style="width:${(n/maxPlat)*100}%;background:var(--blue)"></div></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(n/maxPlat)*100}%;background:${platformColorVar(pl)}"></div></div>
       <span class="bn">${n}</span></div>`;
   }).join('') || '<p class="muted" style="font-size:12.5px">Todavía no hay videos cargados.</p>';
 
@@ -1048,7 +1052,7 @@ RENDER.metricas=function(){
     <tr>
       <td><div style="font-weight:600">${escapeHtml(v.titulo||'Sin título')}</div>${v.link?`<a href="${escapeHtml(v.link)}" target="_blank" class="muted" style="font-size:12px;text-decoration:underline">Ver video</a>`:''}</td>
       <td>${escapeHtml(clientName(v.clientId))}</td>
-      <td><span class="badge-pill b-blue"><span class="dot"></span>${escapeHtml(v.plataforma||'—')}</span></td>
+      <td><span class="badge-pill ${platformBadge(v.plataforma)}"><span class="dot"></span>${escapeHtml(v.plataforma||'—')}</span></td>
       <td>${fmtDate(v.fecha)}</td>
       <td style="font-family:var(--font-d)">${Number(v.vistas||0).toLocaleString('es-AR')}</td>
       <td style="font-family:var(--font-d)">${Number(v.likes||0).toLocaleString('es-AR')}</td>
@@ -1227,21 +1231,29 @@ function connectInstagramModal(clientId){
   },'Conectar y sincronizar');
 }
 const IG_INSIGHT_METRICS = {
-  REELS: 'plays,reach,saved,shares,ig_reels_avg_watch_time',
-  VIDEO: 'video_views,reach,saved,shares',
-  CAROUSEL_ALBUM: 'impressions,reach,saved,shares',
-  IMAGE: 'impressions,reach,saved,shares'
+  REELS: ['views','plays','reach','saved','shares','ig_reels_avg_watch_time'],
+  VIDEO: ['views','video_views','reach','saved','shares'],
+  CAROUSEL_ALBUM: ['reach','saved','shares'],
+  IMAGE: ['reach','saved','shares']
 };
+// Meta va renombrando/deprecando métricas de Insights seguido (ej: "plays" -> "views",
+// "impressions" ya no existe para cuentas nuevas). Si se pide todo en una sola llamada
+// con metric=a,b,c y UNA sola métrica no es válida, la Graph API rechaza el pedido
+// entero y perdemos todo. Por eso acá se pide cada métrica por separado: la que falle
+// simplemente no aparece, pero las demás sí se traen.
 async function fetchIgInsights(mediaId, mediaProductType, token){
   const metrics = IG_INSIGHT_METRICS[mediaProductType] || IG_INSIGHT_METRICS.IMAGE;
-  try{
-    const res = await fetch(`https://graph.facebook.com/v19.0/${mediaId}/insights?metric=${metrics}&access_token=${encodeURIComponent(token)}`);
-    const data = await res.json();
-    if(data.error) return null;
-    const out = {};
-    (data.data||[]).forEach(m=>{ out[m.name] = (m.values&&m.values[0]) ? m.values[0].value : null; });
-    return out;
-  }catch(e){ return null; }
+  const out = {};
+  for(const metric of metrics){
+    try{
+      const res = await fetch(`https://graph.facebook.com/v21.0/${mediaId}/insights?metric=${metric}&access_token=${encodeURIComponent(token)}`);
+      const data = await res.json();
+      if(!data.error && data.data && data.data[0] && data.data[0].values && data.data[0].values[0]){
+        out[data.data[0].name] = data.data[0].values[0].value;
+      }
+    }catch(e){}
+  }
+  return Object.keys(out).length ? out : null;
 }
 async function syncInstagram(clientId){
   const c=contactById(clientId);
@@ -1249,7 +1261,7 @@ async function syncInstagram(clientId){
   if(!conf||!conf.token||!conf.igId){ toast('Falta configurar Instagram para este cliente'); return; }
   toast('Sincronizando Instagram…');
   try{
-    const url=`https://graph.facebook.com/v19.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=15&access_token=${encodeURIComponent(conf.token)}`;
+    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.igId)}/media?fields=id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=15&access_token=${encodeURIComponent(conf.token)}`;
     const res=await fetch(url);
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
@@ -1261,7 +1273,7 @@ async function syncInstagram(clientId){
         titulo:(item.caption||'Publicación de Instagram').slice(0,80),
         fecha:(item.timestamp||'').slice(0,10),
         likes:item.like_count||0, comentarios:item.comments_count||0,
-        vistas:ins?(ins.plays??ins.video_views??ins.impressions??''):'',
+        vistas:ins?(ins.views??ins.plays??ins.video_views??''):'',
         compartidos:ins?(ins.shares??''):'',
         guardados:ins?(ins.saved??''):'',
         retencionSeg:ins?(ins.ig_reels_avg_watch_time??''):'',
@@ -1298,15 +1310,21 @@ function connectFacebookModal(clientId){
     syncFacebook(clientId);
   },'Conectar y sincronizar');
 }
+const FB_INSIGHT_METRICS = ['total_video_views','total_video_avg_time_watched'];
+// Mismo motivo que en Instagram: se pide cada métrica por separado para que una
+// sola métrica deprecada/no disponible no tire abajo toda la sincronización.
 async function fetchFbVideoInsights(videoId, token){
-  try{
-    const res = await fetch(`https://graph.facebook.com/v19.0/${videoId}/video_insights?metric=total_video_views,total_video_avg_time_watched&access_token=${encodeURIComponent(token)}`);
-    const data = await res.json();
-    if(data.error) return null;
-    const out = {};
-    (data.data||[]).forEach(m=>{ out[m.name] = (m.values&&m.values[0]) ? m.values[0].value : null; });
-    return out;
-  }catch(e){ return null; }
+  const out = {};
+  for(const metric of FB_INSIGHT_METRICS){
+    try{
+      const res = await fetch(`https://graph.facebook.com/v21.0/${videoId}/video_insights?metric=${metric}&access_token=${encodeURIComponent(token)}`);
+      const data = await res.json();
+      if(!data.error && data.data && data.data[0] && data.data[0].values && data.data[0].values[0]){
+        out[data.data[0].name] = data.data[0].values[0].value;
+      }
+    }catch(e){}
+  }
+  return Object.keys(out).length ? out : null;
 }
 async function syncFacebook(clientId){
   const c=contactById(clientId);
@@ -1314,7 +1332,7 @@ async function syncFacebook(clientId){
   if(!conf||!conf.token||!conf.pageId){ toast('Falta configurar Facebook para este cliente'); return; }
   toast('Sincronizando Facebook…');
   try{
-    const url=`https://graph.facebook.com/v19.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=15&access_token=${encodeURIComponent(conf.token)}`;
+    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=15&access_token=${encodeURIComponent(conf.token)}`;
     const res=await fetch(url);
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);

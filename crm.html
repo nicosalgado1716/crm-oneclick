@@ -1426,7 +1426,7 @@ function connectFacebookModal(clientId){
     syncFacebook(clientId);
   },'Conectar y sincronizar');
 }
-const FB_INSIGHT_METRICS = ['total_video_views','blue_reels_play_count','total_video_avg_time_watched'];
+const FB_INSIGHT_METRICS = ['total_video_views','blue_reels_play_count','post_video_views','total_video_avg_time_watched'];
 // Mismo motivo que en Instagram: se pide cada métrica por separado para que una
 // sola métrica deprecada/no disponible no tire abajo toda la sincronización.
 async function fetchFbVideoInsights(videoId, token){
@@ -1448,9 +1448,22 @@ async function syncFacebook(clientId){
   if(!conf||!conf.token||!conf.pageId){ toast('Falta configurar Facebook para este cliente'); return; }
   toast('Sincronizando Facebook…');
   try{
-    const url=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=50&access_token=${encodeURIComponent(conf.token)}`;
-    const pageItems = await fetchAllPages(url, { cutoff: conf.desde||null, dateOf: it=>(it.created_time||'').slice(0,10) });
-    const allItems = conf.desde ? pageItems.filter(it=>(it.created_time||'').slice(0,10)>=conf.desde) : pageItems;
+    // Facebook expone los Reels de Página por un endpoint aparte (/video_reels),
+    // distinto del de video "tradicional" (/videos) — hay que traer los dos y
+    // juntarlos (sin duplicar) para no perdernos la mayoría de los Reels.
+    const videosUrl=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.pageId)}/videos?fields=id,title,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=50&access_token=${encodeURIComponent(conf.token)}`;
+    const reelsUrl=`https://graph.facebook.com/v21.0/${encodeURIComponent(conf.pageId)}/video_reels?fields=id,description,created_time,permalink_url,likes.summary(true),comments.summary(true)&limit=50&access_token=${encodeURIComponent(conf.token)}`;
+    const dateOf = it=>(it.created_time||'').slice(0,10);
+    const [videoItems, reelItems] = await Promise.all([
+      fetchAllPages(videosUrl, { cutoff: conf.desde||null, dateOf }).catch(e=>{ console.error('Error trayendo videos de Facebook:',e); return []; }),
+      fetchAllPages(reelsUrl, { cutoff: conf.desde||null, dateOf }).catch(e=>{ console.error('Error trayendo Reels de Facebook:',e); return []; })
+    ]);
+    const vistos = new Set();
+    const pageItems = [...videoItems, ...reelItems].filter(it=>{
+      if(vistos.has(it.id)) return false;
+      vistos.add(it.id); return true;
+    });
+    const allItems = conf.desde ? pageItems.filter(it=>dateOf(it)>=conf.desde) : pageItems;
     let sinInsights=0;
     for(const item of allItems){
       const ins = await fetchFbVideoInsights(item.id, conf.token);
@@ -1460,7 +1473,7 @@ async function syncFacebook(clientId){
         fecha:(item.created_time||'').slice(0,10), publicadoEn:item.created_time||'',
         likes:(item.likes&&item.likes.summary&&item.likes.summary.total_count)||0,
         comentarios:(item.comments&&item.comments.summary&&item.comments.summary.total_count)||0,
-        vistas:ins?(ins.total_video_views??ins.blue_reels_play_count??''):'',
+        vistas:ins?(ins.total_video_views??ins.blue_reels_play_count??ins.post_video_views??''):'',
         retencionSeg:ins&&ins.total_video_avg_time_watched!=null?(ins.total_video_avg_time_watched/1000):'',
         origen:'api'
       });
